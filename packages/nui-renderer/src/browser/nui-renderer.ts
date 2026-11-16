@@ -35,6 +35,7 @@ export interface NuiRendererApi {
     apply: (json: string) => void;
     debug: () => NuiDebugSnapshot;
     destroy: () => void;
+    planeFrame: (id: number, jpegBase64: string) => void;
 }
 
 interface SceneNode {
@@ -191,6 +192,7 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
     const nodes = new Map<number, SceneNode>();
     const rootChildIds: number[] = [];
     const players = new Map<number, PlayerEntry>();
+    const planes = new Map<number, HTMLImageElement>();
     const fieldInputs = new Set<HTMLInputElement>();
     const suppressedKeyCodes = new Set<number>();
     const forwardedKeyCodes = new Set<number>();
@@ -974,7 +976,68 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
         entry.video.src = url;
     }
 
+    function removeBrowserPlayer(id: number): 'window' | 'none' {
+        const existing = players.get(id);
+        if (!existing) {
+            return 'none';
+        }
+        stopPlayerTimer(existing);
+        destroyPlayerHls(existing);
+        players.delete(id);
+        if (existing.video.parentNode) {
+            existing.video.parentNode.removeChild(existing.video);
+        }
+        return existing.displayMode;
+    }
+
+    function removePlane(id: number): void {
+        const plane = planes.get(id);
+        if (plane && plane.parentNode) {
+            plane.parentNode.removeChild(plane);
+        }
+        planes.delete(id);
+    }
+
+    function openPlane(id: number): void {
+        const displayMode = removeBrowserPlayer(id);
+        removePlane(id);
+        const image = doc.createElement('img');
+        image.setAttribute('data-nui-plane', String(id));
+        image.style.position = 'absolute';
+        image.style.left = '0px';
+        image.style.top = '0px';
+        image.style.width = '1920px';
+        image.style.height = '1080px';
+        image.style.objectFit = 'contain';
+        image.style.backgroundColor = '#000000';
+        image.style.display = displayMode === 'window' ? 'block' : 'none';
+        underlayEl.appendChild(image);
+        planes.set(id, image);
+    }
+
+    function planeFrame(id: number, jpegBase64: string): void {
+        const plane = planes.get(id);
+        if (plane) {
+            plane.src = 'data:image/jpeg;base64,' + jpegBase64;
+        }
+    }
+
     function applyPlayerMessage(msg: NuiPlayerMessage): void {
+        if (msg.op === 'open' && msg.plane) {
+            openPlane(msg.id);
+            return;
+        }
+        const plane = planes.get(msg.id);
+        if (plane) {
+            if (msg.op === 'display') {
+                plane.style.display = msg.mode === 'window' ? 'block' : 'none';
+            } else if (msg.op === 'close' || msg.op === 'open') {
+                removePlane(msg.id);
+            }
+            if (msg.op !== 'open') {
+                return;
+            }
+        }
         const entry = getOrCreatePlayer(msg.id);
         if (msg.op === 'open') {
             openPlayerSource(entry, msg.url);
@@ -1230,6 +1293,7 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
             }
         });
         players.clear();
+        planes.forEach((_plane, id) => removePlane(id));
         nodes.forEach((node) => {
             if (node.el.parentNode) {
                 node.el.parentNode.removeChild(node.el);
@@ -1241,5 +1305,5 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
         suppressedKeyCodes.clear();
     }
 
-    return { apply, debug, destroy };
+    return { apply, debug, destroy, planeFrame };
 }

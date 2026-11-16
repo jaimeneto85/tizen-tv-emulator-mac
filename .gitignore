@@ -6,3 +6,4 @@ dist
 coverage
 .pnpm-store
 .review
+native/video-plane/build

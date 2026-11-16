@@ -98,9 +98,9 @@ Frame/operation totals depend on scheduler timing; assertions verify behavior an
 | E-mail / password field IDs | 29 / 30 | 40 / 42 |
 | Focus sequence after remote input | 29 → 30 → 31 | 40 → 42 → 44 |
 | Field text changed | true | true |
-| Application login error text | Confira seu e-mail e senha. | Confira seu e-mail e senha. |
+| Application login error text shown | true | true |
 | HTTP request failure observed | true | true |
-| Back dialog | Deseja encerrar o aplicativo? | Deseja encerrar o aplicativo? |
+| Back dialog shown | true | true |
 | Frames / focus operations | 11 / 18 | 11 / 18 |
 | Runtime exit / crashes | 0 / none | 0 / none |
 | Observed script checks passed | true | true |

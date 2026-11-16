@@ -258,7 +258,7 @@ export type NuiOp =
     | ['ime', number, NuiImeOptions?];
 
 export type NuiPlayerMessage =
-    | { t: 'player'; id: number; op: 'open'; url: string }
+    | { t: 'player'; id: number; op: 'open'; url: string; plane?: boolean }
     | { t: 'player'; id: number; op: 'display'; mode: 'window' | 'none' }
     | { t: 'player'; id: number; op: 'prepare' }
     | { t: 'player'; id: number; op: 'start' }

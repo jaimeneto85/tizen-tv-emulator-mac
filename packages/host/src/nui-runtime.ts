@@ -256,6 +256,42 @@ export async function inspectDotnetAssembly(options: {
     });
 }
 
+export type OriginMap = { from: string; to: string }[];
+
+export function parseOriginMap(specification: string | undefined): OriginMap {
+    if (!specification || specification.trim() === '') {
+        return [];
+    }
+    return specification.split(';').map((entry) => entry.trim()).filter(Boolean).map((entry) => {
+        const separator = entry.indexOf('=');
+        const from = separator === -1 ? '' : entry.slice(0, separator);
+        const to = separator === -1 ? '' : entry.slice(separator + 1);
+        try {
+            const target = new URL(to);
+            if (target.hostname !== '127.0.0.1' && target.hostname !== 'localhost' && target.hostname !== '[::1]') {
+                throw new Error('not loopback');
+            }
+            return { from: new URL(from).origin, to: target.origin };
+        } catch {
+            throw new Error(`Invalid --map-origin entry "${entry}". Expected <origin>=<loopback origin>, e.g. https://api.example.com=http://127.0.0.1:4000`);
+        }
+    });
+}
+
+export function applyOriginMap(rawUrl: string, map: OriginMap): string {
+    if (map.length === 0 || !/^https?:\/\//i.test(rawUrl)) {
+        return rawUrl;
+    }
+    let parsed: URL;
+    try {
+        parsed = new URL(rawUrl);
+    } catch {
+        return rawUrl;
+    }
+    const route = map.find((entry) => entry.from === parsed.origin);
+    return route ? route.to + rawUrl.slice(parsed.origin.length) : rawUrl;
+}
+
 export function rewriteLocalUrl(rawUrl: string, contentDir: string, packageId: string): string {
     if (!rawUrl || /^https?:\/\//i.test(rawUrl) || /^(data|blob):/i.test(rawUrl) || rawUrl.startsWith('/app/')) {
         return rawUrl;
@@ -349,6 +385,7 @@ export async function createNuiSession(options: CreateNuiSessionOptions): Promis
     await mkdir(options.dataDir, { recursive: true });
     const token = randomBytes(24).toString('hex');
     const execName = options.app.manifest.exec ?? options.app.manifest.contentSrc;
+    const originMap = parseOriginMap((options.env ?? process.env).TVEMU_HTTP_MAP);
     const stderrLines: string[] = [];
     let activeSocket: Socket | null = null;
     let authenticated = false;
@@ -477,7 +514,9 @@ export async function createNuiSession(options: CreateNuiSessionOptions): Promis
             return;
         }
         if (msg.t === 'frame' && Array.isArray(msg.ops)) {
-            const rewritten = rewriteLocalUrlsForFrame(msg.ops, options.contentDir, options.app.manifest.packageId);
+            const rewritten = rewriteLocalUrlsForFrame(msg.ops, options.contentDir, options.app.manifest.packageId).map((op) =>
+                op[0] === 'set' && typeof op[2].url === 'string' ? (['set', op[1], { ...op[2], url: applyOriginMap(op[2].url, originMap) }] as NuiOp) : op,
+            );
             const chunks = chunkFrameOps(rewritten);
             for (const ops of chunks) {
                 options.onFrame(JSON.stringify({ t: 'frame', ops }));
@@ -486,7 +525,7 @@ export async function createNuiSession(options: CreateNuiSessionOptions): Promis
         }
         if (msg.t === 'player') {
             const playerMsg: NuiPlayerMessage = msg.op === 'open'
-                ? { ...msg, url: rewriteLocalUrl(msg.url, options.contentDir, options.app.manifest.packageId) }
+                ? { ...msg, url: applyOriginMap(rewriteLocalUrl(msg.url, options.contentDir, options.app.manifest.packageId), originMap) }
                 : msg;
             options.onPlayer(JSON.stringify(playerMsg));
             return;

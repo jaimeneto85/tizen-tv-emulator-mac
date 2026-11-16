@@ -5,7 +5,20 @@ export {
     type SdbBridgeFactory,
     type SdbBridgeInstance,
     type TvemuHost,
+    type WaitCondition,
 } from './host.js';
+export {
+    formatUiSnapshot,
+    snapshotContainsText,
+    snapshotFocusContains,
+    type UiField,
+    type UiImage,
+    type UiRect,
+    type UiSnapshot,
+    type UiText,
+    type UiVideo,
+} from './agent.js';
+export { runMcpServer } from './mcp.js';
 export {
     createHostHttpServer,
     type ControlResponse,

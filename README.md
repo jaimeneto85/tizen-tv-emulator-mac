@@ -124,19 +124,69 @@ Default device identity fields are generic non-Samsung placeholders shaped after
 
 | Command | Description |
 |---|---|
-| `tvemu start [--profile <name>] [--scale <n>] [--headless] [--no-sdb] [--no-remote] [--strict-engine] [--set <key=value>]` | Start the emulator host in the foreground and open the remote UI window (unless `--no-remote` or `--headless`). |
+| `tvemu start [options]` | Start the emulator host in the foreground and open the remote UI window (unless `--no-remote` or `--headless`). Options: `--profile <name>`, `--scale <n>`, `--headless`, `--no-sdb`, `--no-remote`, `--strict-engine`, `--set <key=value>`, `--detach`, `--map-origin <origin>=<local origin>`. |
+| `tvemu run <appId\|packageId\|file.wgt\|file.tpk> [options]` | Start the emulator if not already running, install the package if given a file, and launch the app. Same options as `start`. |
 | `tvemu install <file.wgt\|file.tpk>` | Install a `.wgt` or `.NET .tpk` package into the app store (detected by content; works offline or against a running instance). |
-| `tvemu run <appId\|packageId\|file.wgt\|file.tpk> [--profile <name>] [--scale <n>] [--headless] [--no-sdb] [--no-remote] [--strict-engine] [--set <key=value>]` | Start the emulator if not already running, install the package if given a file, and launch the app. |
 | `tvemu uninstall <packageId>` | Uninstall an app by package ID. |
 | `tvemu list` | List installed apps with package kind (`wgt` or `tpk`). |
 | `tvemu inspect <file.tpk\|installed id>` | Run the .NET NUI API inspector against a `.tpk` or installed `.tpk` app and report supported/missing members. |
+| `tvemu status [--json]` | Whether the emulator is running, its profile and the running app. |
+| `tvemu key <name>... [--repeat <n>] [--delay <ms>] [--action press\|down\|up] [--ui]` | Send one or more remote keys in order. `--ui` waits for the screen to settle and prints it. |
+| `tvemu type <text> [--append]` | Type into the focused text field (opens it first when needed). |
+| `tvemu focus <text> [--enter]` | Walk the focus to the element showing that text using only arrow keys; fails when the D-pad cannot reach it. `--enter` then presses Enter. |
+| `tvemu ui [--json]` | Describe the screen as text: focus, labels, fields, images (loaded or not) and videos (position, state). |
+| `tvemu wait [--text <t>] [--gone <t>] [--focus <t>] [--exited] [--timeout <ms>]` | Block until the condition holds, then print the screen. Without a condition, waits for the screen to stop changing. Exits non-zero on timeout. |
+| `tvemu screenshot <out.png>` | Capture a PNG screenshot of the running app page. |
+| `tvemu logs [--since <seq>] [--engine] [--json]` | Recent host, app and bridge log lines. |
+| `tvemu mcp` | Serve the emulator as an MCP server over stdio (see [Driving the Emulator from an Agent](#driving-the-emulator-from-an-agent)). |
+| `tvemu stop` | Stop the running emulator instance cleanly. |
 | `tvemu profiles` | List device profiles with exact vs approximate engine status. |
-| `tvemu doctor` | Check Node.js, architecture, Rosetta 2, `<home>`, port `26101`, Samsung `sdb`, `dotnet`, NUI runtime build status, and every profile's engine resolution. |
+| `tvemu doctor` | Check Node.js, architecture, Rosetta 2, `<home>`, port `26101`, Samsung `sdb`, `dotnet`, NUI runtime and video plane build status, and every profile's engine resolution. |
 | `tvemu engine list` | List supported Chromium milestones and availability. |
 | `tvemu engine install <milestone>` | Download and extract the pinned Chromium snapshot for `<milestone>`. |
-| `tvemu key <name> [--action press\|down\|up]` | Send a remote key event to the running emulator. |
-| `tvemu screenshot <out.png>` | Capture a PNG screenshot of the running app page. |
-| `tvemu stop` | Stop the running emulator instance cleanly. |
+
+## Driving the Emulator from an Agent
+
+Everything a person does with the remote can be done by a script or an AI agent, without looking at pixels.
+
+```bash
+tvemu run app.tpk --headless --no-remote --detach     # returns once the app is on screen
+tvemu wait --text "Sign in"                           # block until the screen shows it
+tvemu key Enter                                       # open the focused field
+tvemu type "someone@example.com"
+tvemu key Enter ArrowDown ArrowDown Enter --ui        # send keys, print the resulting screen
+tvemu focus "Play video" --enter                      # reach an element with the arrows, then press it
+tvemu ui --json                                       # focus, texts, fields, images, videos
+tvemu screenshot step.png
+tvemu stop
+```
+
+`tvemu ui` prints one line per visible element in reading order, with `>` on the focused one:
+
+```
+screen 1920x1080  http://127.0.0.1:57497/nui/
+focus: view "Play video" at 1020,462 820x90
+  Save  (1040,276 85x38)
+> Play video  (1040,488 231x38)
+  image loaded http://127.0.0.1:4010/cover.svg  (80,250 896x504)
+  video playing 2343/8000 ms http://127.0.0.1:4010/clip.mp4
+```
+
+For agents that speak the Model Context Protocol, register the emulator as a server:
+
+```json
+{
+    "mcpServers": {
+        "tvemu": { "command": "node", "args": ["<repo>/packages/host/dist/cli.js", "mcp"] }
+    }
+}
+```
+
+Tools: `tv_start`, `tv_stop`, `tv_status`, `tv_launch`, `tv_key` (returns the settled screen), `tv_focus`, `tv_type`, `tv_screen`, `tv_wait`, `tv_screenshot` (returns the image) and `tv_logs`. The same operations are available over HTTP at `POST /control/<command>` with the bearer token from `<home>/run.json`.
+
+### Testing against a local backend
+
+`--map-origin https://api.example.com=http://127.0.0.1:4000` makes the app's requests to that origin, and the images and videos it loads from it, go to a server on your machine. The app still believes it is talking to the original HTTPS origin, so URL validation in the app keeps passing. It applies to `.tpk` apps only (HTTP made through `HttpClient`, plus image and media URLs), the target must be loopback, and it is meant for tests: do not use it to judge TLS behaviour.
 
 ## .NET NUI Apps (`.tpk`)
 
@@ -154,7 +204,8 @@ Default device identity fields are generic non-Samsung placeholders shaped after
   - **Native C/C++ `.tpk` unsupported:** `capp` / `c++app` packages require the Tizen OS and are rejected at install time.
   - **DOM approximation of DALi:** `@tvemu/nui-renderer` approximates DALi views, text, borders, images, and fields using HTML/CSS inside Chromium; subtle visual differences can occur.
   - **Fonts differ:** TV system fonts are not bundled; Chromium uses available macOS/system fonts unless the app loads its own.
-  - **DRM absent:** Hardware-backed TV DRM pipelines are not implemented; video playback uses HTML5 `<video>` (and `window.Hls` if present for non-native HLS).
+  - **Video:** the pinned Chromium builds have no H.264/AAC or HLS decoder, so on macOS those streams are decoded by a small native helper (`native/video-plane`, AVFoundation, built by `pnpm build` or `pnpm build:video`) and drawn on the video plane under the UI, at up to 20 frames per second and 960 pixels wide. That is enough to test player flows, not picture quality. WebM plays in the browser engine. `TVEMU_VIDEO=browser|native` forces one path. Without the helper, H.264 and HLS fail with a player error.
+  - **DRM absent:** Hardware-backed TV DRM pipelines are not implemented.
 
 ## Using with Samsung `sdb` and `tizen` Tools
 

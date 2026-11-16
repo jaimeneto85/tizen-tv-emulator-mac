@@ -31,7 +31,11 @@ import {
     type NuiInspectReport,
 } from './nui-runtime.js';
 import { loadDeviceProfile, parseProfileSetArgs, selectDeviceProfile } from './profile.js';
-import { readRunState, type RunState } from './run-file.js';
+import { formatUiSnapshot, type UiSnapshot } from './agent.js';
+import { callControl, requireRunning, startDetached } from './control-client.js';
+import { runMcpServer } from './mcp.js';
+import { resolveVideoPlaneHelper } from './native-video.js';
+import { readRunState } from './run-file.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -58,41 +62,27 @@ function usageText(): string {
         'Usage: tvemu <command> [options]',
         '',
         'Commands:',
-        '  start [--profile <name>] [--scale <n>] [--headless] [--no-sdb] [--no-remote] ' +
-        '[--strict-engine] [--set <key=value>]',
+        '  start [--profile <name>] [--scale <n>] [--headless] [--no-sdb] [--no-remote] [--detach]',
+        '        [--strict-engine] [--set <key=value>] [--map-origin <origin>=<local origin>]',
+        '  run <appId|packageId|file.wgt|file.tpk>   same options as start',
         '  install <file.wgt|file.tpk>',
-        '  run <appId|packageId|file.wgt|file.tpk> [--profile <name>] [--scale <n>] [--headless] ' +
-        '[--no-sdb] [--no-remote] [--strict-engine] [--set <key=value>]',
         '  uninstall <packageId>',
         '  list',
         '  inspect <file.tpk|installed id>',
+        '  status [--json]',
+        '  key <name>... [--repeat <n>] [--delay <ms>] [--action press|down|up] [--ui]',
+        '  type <text> [--append]',
+        '  focus <text> [--enter]',
+        '  ui [--json]',
+        '  wait [--text <t>] [--gone <t>] [--focus <t>] [--exited] [--timeout <ms>] [--json]',
+        '  screenshot <out.png>',
+        '  logs [--since <seq>] [--engine] [--json]',
+        '  mcp',
+        '  stop',
         '  profiles',
         '  doctor',
         '  engine list | install <milestone>',
-        '  key <name> [--action press|down|up]',
-        '  screenshot <out.png>',
-        '  stop',
     ].join('\n');
-}
-
-async function callControl<T extends Record<string, unknown>>(
-    runState: RunState,
-    command: string,
-    body?: Record<string, unknown>,
-): Promise<T> {
-    const response = await fetch(`http://127.0.0.1:${runState.port}/control/${command}`, {
-        method: 'POST',
-        headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${runState.token}`,
-        },
-        body: JSON.stringify(body ?? {}),
-    });
-    const data = (await response.json()) as { ok?: boolean; error?: string } & T;
-    if (!response.ok || !data.ok) {
-        throw new Error(data.error ?? `Control request ${command} failed with HTTP ${response.status}`);
-    }
-    return data;
 }
 
 async function openRemoteUiWindow(
@@ -148,6 +138,8 @@ function parseStartRunFlags(args: string[]): {
     noSdb: boolean;
     noRemote: boolean;
     strictEngine: boolean;
+    detach: boolean;
+    mapOrigins: string[];
     setOverrides: Record<string, unknown>;
 } {
     const parsed = parseArgs({
@@ -161,6 +153,8 @@ function parseStartRunFlags(args: string[]): {
             'no-remote': { type: 'boolean', default: false },
             'strict-engine': { type: 'boolean', default: false },
             set: { type: 'string', multiple: true },
+            detach: { type: 'boolean', default: false },
+            'map-origin': { type: 'string', multiple: true },
         },
     });
     let scale: number | undefined;
@@ -179,6 +173,8 @@ function parseStartRunFlags(args: string[]): {
         noSdb: parsed.values['no-sdb'],
         noRemote: parsed.values['no-remote'],
         strictEngine: parsed.values['strict-engine'],
+        detach: parsed.values.detach,
+        mapOrigins: parsed.values['map-origin'] ?? [],
         setOverrides,
     };
 }
@@ -309,6 +305,8 @@ async function runDoctor(home: string, io: CliIo, env: NodeJS.ProcessEnv): Promi
     io.stdout(`Port ${SDB_DEFAULT_PORT}: ${sdbPortStatus.detail}`);
     io.stdout(`Samsung sdb (PATH): ${sdbOnPath ?? 'not found'}`);
     io.stdout(`Samsung sdb (~/tizen-studio/tools/sdb): ${sdbInStudio ?? 'not found'}`);
+    const videoHelper = resolveVideoPlaneHelper(env);
+    io.stdout(`Video plane: ${videoHelper ? `native (${videoHelper})` : 'browser engine only (run: pnpm build:video for H.264/HLS)'}`);
     io.stdout(`dotnet: ${dotnetVersion ?? 'not found'}`);
     io.stdout(
         `NUI runtime: ${
@@ -403,7 +401,22 @@ async function runForegroundHost(
     }
 }
 
-export async function runCli(argv: string[], io: CliIo = DEFAULT_IO, env: NodeJS.ProcessEnv = process.env): Promise<number> {
+function withOriginMap(env: NodeJS.ProcessEnv, mapOrigins: string[]): NodeJS.ProcessEnv {
+    return mapOrigins.length === 0 ? env : { ...env, TVEMU_HTTP_MAP: mapOrigins.join(';') };
+}
+
+async function runDetached(home: string, command: 'start' | 'run', args: string[], io: CliIo, env: NodeJS.ProcessEnv): Promise<number> {
+    const started = await startDetached(home, command, args.filter((arg) => arg !== '--detach'), env);
+    io.stdout(`Emulator started in the background (pid ${started.pid}, port ${started.port}).`);
+    io.stdout(`Log: ${started.logPath}`);
+    if (started.running) {
+        io.stdout(`Running ${started.running.manifest.appId}`);
+    }
+    return 0;
+}
+
+export async function runCli(argv: string[], io: CliIo = DEFAULT_IO, inputEnv: NodeJS.ProcessEnv = process.env): Promise<number> {
+    let env = inputEnv;
     const command = argv[0];
     if (!command || command === '--help' || command === '-h' || command === 'help') {
         io.stdout(usageText());
@@ -417,6 +430,10 @@ export async function runCli(argv: string[], io: CliIo = DEFAULT_IO, env: NodeJS
         switch (command) {
             case 'start': {
                 const flags = parseStartRunFlags(rest);
+                if (flags.detach) {
+                    return await runDetached(home, 'start', rest, io, env);
+                }
+                env = withOriginMap(env, flags.mapOrigins);
                 const existing = await readRunState(home);
                 if (existing) {
                     throw new Error(`Emulator is already running (pid ${existing.pid}, port ${existing.port})`);
@@ -466,7 +483,14 @@ export async function runCli(argv: string[], io: CliIo = DEFAULT_IO, env: NodeJS
                 }
                 const isPackage = await isPackageTarget(target);
                 const existing = await readRunState(home);
+                if (flags.detach && !existing) {
+                    return await runDetached(home, 'run', rest, io, env);
+                }
+                env = withOriginMap(env, flags.mapOrigins);
                 if (existing) {
+                    if (flags.mapOrigins.length > 0) {
+                        io.stderr('--map-origin is ignored: the emulator is already running. Stop it and start again to change it.');
+                    }
                     let appId = target;
                     if (isPackage) {
                         const wgtPath = path.resolve(target);
@@ -696,22 +720,141 @@ export async function runCli(argv: string[], io: CliIo = DEFAULT_IO, env: NodeJS
                     allowPositionals: true,
                     options: {
                         action: { type: 'string', default: 'press' },
+                        repeat: { type: 'string', default: '1' },
+                        delay: { type: 'string', default: '150' },
+                        ui: { type: 'boolean', default: false },
                     },
                 });
-                const keyName = parsed.positionals[0];
-                if (!keyName) {
-                    throw new Error('Usage: tvemu key <name> [--action press|down|up]');
+                const keyNames = parsed.positionals;
+                if (keyNames.length === 0) {
+                    throw new Error('Usage: tvemu key <name>... [--repeat <n>] [--delay <ms>] [--action press|down|up] [--ui]');
                 }
                 const action = parsed.values.action;
                 if (action !== 'press' && action !== 'down' && action !== 'up') {
                     throw new Error(`Invalid --action: ${action}. Expected press, down, or up`);
                 }
+                const repeat = Number(parsed.values.repeat);
+                const delay = Number(parsed.values.delay);
+                if (!Number.isInteger(repeat) || repeat < 1 || !Number.isFinite(delay) || delay < 0) {
+                    throw new Error('Invalid --repeat or --delay value');
+                }
+                const existing = await requireRunning(home);
+                const sequence = Array.from({ length: repeat }, () => keyNames).flat();
+                for (const [index, keyName] of sequence.entries()) {
+                    await callControl(existing, 'key', { key: keyName, action: action as KeyAction });
+                    if (index < sequence.length - 1 || parsed.values.ui) {
+                        await new Promise((resolve) => setTimeout(resolve, delay));
+                    }
+                }
+                io.stdout(`Sent ${sequence.length === 1 ? `key ${sequence[0]}` : `keys ${sequence.join(' ')}`} (${action})`);
+                if (parsed.values.ui) {
+                    const settled = await callControl<{ snapshot: UiSnapshot; running: InstalledApp | null }>(existing, 'wait', { timeoutMs: 3000 })
+                        .catch(() => null);
+                    io.stdout(settled?.running ? formatUiSnapshot(settled.snapshot) : 'No app is running.');
+                }
+                return 0;
+            }
+
+            case 'ui': {
+                const parsed = parseArgs({ args: rest, options: { json: { type: 'boolean', default: false } } });
+                const existing = await requireRunning(home);
+                const response = await callControl<{ snapshot: UiSnapshot }>(existing, 'ui');
+                io.stdout(parsed.values.json ? JSON.stringify(response.snapshot, null, 2) : formatUiSnapshot(response.snapshot));
+                return 0;
+            }
+
+            case 'type': {
+                const parsed = parseArgs({ args: rest, allowPositionals: true, options: { append: { type: 'boolean', default: false } } });
+                if (parsed.positionals.length !== 1) {
+                    throw new Error('Usage: tvemu type <text> [--append]');
+                }
+                const existing = await requireRunning(home);
+                await callControl(existing, 'type', { text: parsed.positionals[0], mode: parsed.values.append ? 'append' : 'replace' });
+                io.stdout(`Typed ${parsed.positionals[0]!.length} characters`);
+                return 0;
+            }
+
+            case 'focus': {
+                const parsed = parseArgs({ args: rest, allowPositionals: true, options: { enter: { type: 'boolean', default: false } } });
+                if (parsed.positionals.length !== 1) {
+                    throw new Error('Usage: tvemu focus <text> [--enter]');
+                }
+                const existing = await requireRunning(home);
+                const response = await callControl<{ snapshot: UiSnapshot }>(existing, 'focus', { text: parsed.positionals[0] });
+                if (parsed.values.enter) {
+                    await callControl(existing, 'key', { key: 'Enter', action: 'press' });
+                    io.stdout(`Focused "${parsed.positionals[0]}" and pressed Enter`);
+                } else {
+                    io.stdout(formatUiSnapshot(response.snapshot));
+                }
+                return 0;
+            }
+
+            case 'wait': {
+                const parsed = parseArgs({
+                    args: rest,
+                    options: {
+                        text: { type: 'string' },
+                        gone: { type: 'string' },
+                        focus: { type: 'string' },
+                        exited: { type: 'boolean', default: false },
+                        timeout: { type: 'string', default: '10000' },
+                        json: { type: 'boolean', default: false },
+                    },
+                });
+                const timeoutMs = Number(parsed.values.timeout);
+                if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+                    throw new Error(`Invalid --timeout value: ${parsed.values.timeout}`);
+                }
+                const existing = await requireRunning(home);
+                const response = await callControl<{ snapshot: UiSnapshot; running: InstalledApp | null }>(existing, 'wait', {
+                    text: parsed.values.text,
+                    gone: parsed.values.gone,
+                    focus: parsed.values.focus,
+                    exited: parsed.values.exited,
+                    timeoutMs,
+                });
+                if (!response.running) {
+                    io.stdout('No app is running.');
+                } else {
+                    io.stdout(parsed.values.json ? JSON.stringify(response.snapshot, null, 2) : formatUiSnapshot(response.snapshot));
+                }
+                return 0;
+            }
+
+            case 'status': {
+                const parsed = parseArgs({ args: rest, options: { json: { type: 'boolean', default: false } } });
                 const existing = await readRunState(home);
                 if (!existing) {
-                    throw new Error('No running emulator found');
+                    io.stdout(parsed.values.json ? JSON.stringify({ emulator: 'stopped' }) : 'The emulator is not running.');
+                    return 0;
                 }
-                await callControl(existing, 'key', { key: keyName, action: action as KeyAction });
-                io.stdout(`Sent key ${keyName} (${action})`);
+                const status = await callControl<{ running: InstalledApp | null; apps: InstalledApp[]; profile: DeviceProfile; urls: unknown }>(existing, 'status');
+                if (parsed.values.json) {
+                    io.stdout(JSON.stringify({ emulator: 'running', pid: existing.pid, port: existing.port, ...status }, null, 2));
+                } else {
+                    io.stdout(`Emulator running (pid ${existing.pid}, port ${existing.port}), profile ${status.profile.name}`);
+                    io.stdout(status.running ? `Running app: ${status.running.manifest.appId}` : 'No app is running.');
+                }
+                return 0;
+            }
+
+            case 'logs': {
+                const parsed = parseArgs({
+                    args: rest,
+                    options: { since: { type: 'string', default: '0' }, engine: { type: 'boolean', default: false }, json: { type: 'boolean', default: false } },
+                });
+                const existing = await requireRunning(home);
+                const response = await callControl<{ logs: { seq: number; at: number; line: string }[] }>(existing, 'logs', {
+                    since: Number(parsed.values.since) || 0,
+                });
+                const entries = response.logs.filter((entry) => parsed.values.engine || !entry.line.includes('[chromium:stderr]'));
+                io.stdout(parsed.values.json ? JSON.stringify(entries) : entries.map((entry) => `${entry.seq}\t${entry.line}`).join('\n'));
+                return 0;
+            }
+
+            case 'mcp': {
+                await runMcpServer(home, env);
                 return 0;
             }
 
@@ -721,10 +864,7 @@ export async function runCli(argv: string[], io: CliIo = DEFAULT_IO, env: NodeJS
                 if (!outPath) {
                     throw new Error('Usage: tvemu screenshot <out.png>');
                 }
-                const existing = await readRunState(home);
-                if (!existing) {
-                    throw new Error('No running emulator found');
-                }
+                const existing = await requireRunning(home);
                 const response = await callControl<{ pngBase64: string }>(existing, 'screenshot');
                 const resolvedOut = path.resolve(outPath);
                 await writeFile(resolvedOut, Buffer.from(response.pngBase64, 'base64'));

@@ -21,6 +21,7 @@ public static class Program
             var requestedDataDirectory = Option(args, "--data-dir");
             var dataDirectory = requestedDataDirectory is null ? null : Path.GetFullPath(requestedDataDirectory);
             var entryExitCode = 0;
+            var originMap = HttpOriginMap.Install(Environment.GetEnvironmentVariable("TVEMU_HTTP_MAP"));
             RuntimeEngine.Execute(() =>
             {
                 RuntimeEngine.Initialize(appDirectory, dataDirectory);
@@ -32,6 +33,7 @@ public static class Program
                 else if (result is Task task) task.GetAwaiter().GetResult();
                 else if (result is int exitCode) entryExitCode = exitCode;
             });
+            GC.KeepAlive(originMap);
             return RuntimeEngine.ExitCode == 0 ? entryExitCode : RuntimeEngine.ExitCode;
         }
         catch (Exception exception)

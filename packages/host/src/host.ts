@@ -1,3 +1,17 @@
+import type { NuiPlayerMessage } from '@tvemu/protocol';
+import { chooseVideoBackend, createNativeVideo, resolveVideoPlaneHelper, type NativeVideo } from './native-video.js';
+import {
+    arrowKeysToward,
+    buildTypeExpression,
+    findFocusTargets,
+    formatUiSnapshot,
+    isFocusOn,
+    snapshotContainsText,
+    snapshotFocusContains,
+    UI_SNAPSHOT_EXPRESSION,
+    type UiRect,
+    type UiSnapshot,
+} from './agent.js';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -76,6 +90,19 @@ export interface TvemuHost extends HostApi {
     urls(): { remote: string; app: string | null };
     screenshot(): Promise<Buffer>;
     evaluate<T>(expression: string): Promise<T>;
+    uiSnapshot(): Promise<UiSnapshot>;
+    typeText(text: string, mode?: 'replace' | 'append'): Promise<void>;
+    focusOn(text: string): Promise<UiSnapshot>;
+    waitFor(condition: WaitCondition): Promise<UiSnapshot>;
+    logs(sinceSeq?: number): { seq: number; at: number; line: string }[];
+}
+
+export interface WaitCondition {
+    text?: string;
+    gone?: string;
+    focus?: string;
+    exited?: boolean;
+    timeoutMs?: number;
 }
 
 interface KeyRepeatEntry {
@@ -84,6 +111,8 @@ interface KeyRepeatEntry {
     repeatTimer?: ReturnType<typeof setInterval>;
 }
 
+const LOG_BUFFER_LINES = 500;
+const WAIT_POLL_MS = 100;
 const KEY_REPEAT_INITIAL_MS = 500;
 const KEY_REPEAT_INTERVAL_MS = 100;
 
@@ -160,7 +189,14 @@ function formatApproximateEngineWarning(profile: DeviceProfile, resolved: Resolv
 export function createHost(options: CreateHostOptions): TvemuHost {
     const appStore = createAppStore(options.home);
     const controlToken = options.controlToken ?? randomBytes(24).toString('hex');
+    const recentLogs: { seq: number; at: number; line: string }[] = [];
+    let logSeq = 0;
     const emitLog = (line: string): void => {
+        logSeq += 1;
+        recentLogs.push({ seq: logSeq, at: Date.now(), line });
+        if (recentLogs.length > LOG_BUFFER_LINES) {
+            recentLogs.shift();
+        }
         options.log?.(line);
     };
 
@@ -174,6 +210,7 @@ export function createHost(options: CreateHostOptions): TvemuHost {
     let activeEngineIsTpk = false;
     let activeEngineWarning: string | null = null;
     let activeNuiSession: NuiSession | null = null;
+    let activeNativeVideo: NativeVideo | null = null;
     let shuttingDownEngine = false;
     let sdbBridge: SdbBridgeInstance | null = null;
     let httpServer: HostHttpServer | null = null;
@@ -184,6 +221,8 @@ export function createHost(options: CreateHostOptions): TvemuHost {
         }
         const session = activeNuiSession;
         activeNuiSession = null;
+        activeNativeVideo?.dispose();
+        activeNativeVideo = null;
         await session.terminate().catch(() => {});
     }
 
@@ -513,6 +552,68 @@ export function createHost(options: CreateHostOptions): TvemuHost {
 
         const dataDir = path.join(options.home, 'appdata', app.manifest.packageId);
         let sessionRef: NuiSession | null = null;
+        const helperPath = resolveVideoPlaneHelper(options.env);
+        let frameBusy = false;
+        const nativeVideo = helperPath
+            ? createNativeVideo({
+                helperPath,
+                muted: options.headless === true,
+                log: emitLog,
+                onEvent: (message) => {
+                    if (message.event === 'error') {
+                        emitLog(`[video] ${message.message ?? 'playback error'}`);
+                    }
+                    sessionRef?.send(message);
+                },
+                onFrame: (id, jpegBase64) => {
+                    if (frameBusy || activeEngine !== engine) {
+                        return;
+                    }
+                    frameBusy = true;
+                    engine
+                        .evaluate<void>(`window.__tvemuNui && window.__tvemuNui.planeFrame(${id}, "${jpegBase64}");`)
+                        .catch(() => {})
+                        .finally(() => {
+                            frameBusy = false;
+                        });
+                },
+            })
+            : null;
+        activeNativeVideo?.dispose();
+        activeNativeVideo = nativeVideo;
+        const appPort = httpServer.port();
+        const handlePlayer = (payloadJson: string): void => {
+            if (!nativeVideo) {
+                scheduleApply(payloadJson);
+                return;
+            }
+            const message = JSON.parse(payloadJson) as NuiPlayerMessage;
+            if (message.op === 'open') {
+                const absoluteUrl = message.url.startsWith('/') ? `http://127.0.0.1:${appPort}${message.url}` : message.url;
+                if (chooseVideoBackend(absoluteUrl, helperPath, options.env) === 'native') {
+                    emitLog(`[video] native video plane: ${absoluteUrl}`);
+                    nativeVideo.open(message.id, absoluteUrl);
+                    scheduleApply(JSON.stringify({ ...message, plane: true }));
+                    return;
+                }
+                nativeVideo.handle({ t: 'player', id: message.id, op: 'close' });
+                scheduleApply(payloadJson);
+                return;
+            }
+            if (message.op === 'display') {
+                nativeVideo.handle(message);
+                scheduleApply(payloadJson);
+                return;
+            }
+            if (nativeVideo.owns(message.id)) {
+                nativeVideo.handle(message);
+                if (message.op === 'close') {
+                    scheduleApply(payloadJson);
+                }
+                return;
+            }
+            scheduleApply(payloadJson);
+        };
         try {
             sessionRef = await createNuiSession({
                 app,
@@ -526,7 +627,7 @@ export function createHost(options: CreateHostOptions): TvemuHost {
                     emitLog('[nui] app ready');
                 },
                 onFrame: scheduleApply,
-                onPlayer: scheduleApply,
+                onPlayer: handlePlayer,
                 onLog: (level, text) => {
                     emitLog(text);
                     httpServer?.broadcast({ type: 'log', level, text });
@@ -541,6 +642,10 @@ export function createHost(options: CreateHostOptions): TvemuHost {
                         return;
                     }
                     activeNuiSession = null;
+                    nativeVideo?.dispose();
+                    if (activeNativeVideo === nativeVideo) {
+                        activeNativeVideo = null;
+                    }
                     if (info.code !== 0 || info.reason === 'crash') {
                         const errText =
                             `NUI runtime exited (${info.reason}, code=${info.code ?? 'unknown'})` +
@@ -698,6 +803,126 @@ export function createHost(options: CreateHostOptions): TvemuHost {
         return activeEngine.evaluate<T>(expression);
     }
 
+    async function uiSnapshot(): Promise<UiSnapshot> {
+        const snapshot = JSON.parse(await evaluate<string>(UI_SNAPSHOT_EXPRESSION)) as UiSnapshot;
+        if (activeNativeVideo) {
+            snapshot.videos.push(...activeNativeVideo.states());
+        }
+        return snapshot;
+    }
+
+    async function typeText(text: string, mode: 'replace' | 'append' = 'replace'): Promise<void> {
+        if (await evaluate<boolean>(buildTypeExpression(text, mode))) {
+            return;
+        }
+        const before = await uiSnapshot();
+        if (before.focus?.kind !== 'field') {
+            throw new Error('No text field is focused. Move the focus to a field first (tvemu ui shows the focus).');
+        }
+        await sendKey('Enter');
+        const deadline = Date.now() + 2000;
+        while (Date.now() < deadline) {
+            if (await evaluate<boolean>(buildTypeExpression(text, mode))) {
+                return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS));
+        }
+        throw new Error('The focused field did not open for text input after Enter.');
+    }
+
+    async function focusOn(text: string, maxSteps = 24): Promise<UiSnapshot> {
+        const describe = (snapshot: UiSnapshot): string => (snapshot.focus ? `${snapshot.focus.rect.x},${snapshot.focus.rect.y},${snapshot.focus.text}` : '');
+        const same = (a: UiRect, b: UiRect): boolean => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+        let snapshot = await uiSnapshot();
+        if (findFocusTargets(snapshot, text).length === 0) {
+            throw new Error(`Nothing on screen matches "${text}".\n${formatUiSnapshot(snapshot)}`);
+        }
+        const rejected: UiRect[] = [];
+        for (;;) {
+            const target = findFocusTargets(snapshot, text).find((rect) => !rejected.some((other) => same(other, rect)));
+            if (!target) {
+                break;
+            }
+            const seen = new Map<string, number>();
+            for (let step = 0; step < maxSteps; step += 1) {
+                if (isFocusOn(snapshot, target)) {
+                    return snapshot;
+                }
+                const here = describe(snapshot);
+                const visits = seen.get(here) ?? 0;
+                seen.set(here, visits + 1);
+                const keys = arrowKeysToward(snapshot, target);
+                if (visits >= keys.length) {
+                    break;
+                }
+                let moved = false;
+                for (const key of keys.slice(visits)) {
+                    await sendKey(key);
+                    await new Promise((resolve) => setTimeout(resolve, 180));
+                    const next = await uiSnapshot();
+                    if (describe(next) !== here) {
+                        snapshot = next;
+                        moved = true;
+                        break;
+                    }
+                }
+                if (!moved) {
+                    break;
+                }
+            }
+            if (isFocusOn(snapshot, target)) {
+                return snapshot;
+            }
+            rejected.push(target);
+        }
+        throw new Error(`Could not move the focus to "${text}" with the arrow keys.\n${formatUiSnapshot(snapshot)}`);
+    }
+
+    async function waitFor(condition: WaitCondition): Promise<UiSnapshot> {
+        const timeoutMs = condition.timeoutMs ?? 10000;
+        const deadline = Date.now() + timeoutMs;
+        let last: UiSnapshot | null = null;
+        let lastSignature = '';
+        let stableSince = Date.now();
+        while (true) {
+            if (!running) {
+                if (condition.exited) {
+                    return last ?? (await uiSnapshot());
+                }
+                throw new Error('No app is running');
+            }
+            last = await uiSnapshot();
+            const signature = JSON.stringify([last.focus, last.texts, last.fields]);
+            if (signature !== lastSignature) {
+                lastSignature = signature;
+                stableSince = Date.now();
+            }
+            const met =
+                (condition.text === undefined || snapshotContainsText(last, condition.text)) &&
+                (condition.gone === undefined || !snapshotContainsText(last, condition.gone)) &&
+                (condition.focus === undefined || snapshotFocusContains(last, condition.focus)) &&
+                !condition.exited &&
+                (condition.text !== undefined || condition.gone !== undefined || condition.focus !== undefined || Date.now() - stableSince >= 400);
+            if (met) {
+                return last;
+            }
+            if (Date.now() >= deadline) {
+                const wanted = [
+                    condition.text !== undefined ? `text "${condition.text}"` : '',
+                    condition.gone !== undefined ? `"${condition.gone}" to disappear` : '',
+                    condition.focus !== undefined ? `focus on "${condition.focus}"` : '',
+                    condition.exited ? 'the app to exit' : '',
+                ].filter(Boolean).join(', ') || 'the screen to settle';
+                throw new Error(`Timed out after ${timeoutMs} ms waiting for ${wanted}.\n${formatUiSnapshot(last)}`);
+            }
+            await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS));
+        }
+    }
+
+    function logs(sinceSeq = 0): { seq: number; at: number; line: string }[] {
+        return recentLogs.filter((entry) => entry.seq > sinceSeq);
+    }
+
     async function handleRemoteMessage(message: RemoteUiClientMessage): Promise<void> {
         if (message.type === 'key') {
             await sendKey(message.key, message.action);
@@ -775,6 +1000,35 @@ export function createHost(options: CreateHostOptions): TvemuHost {
             case 'screenshot': {
                 const png = await screenshot();
                 return { body: { ok: true, pngBase64: png.toString('base64') } };
+            }
+            case 'ui': {
+                return { body: { ok: true, snapshot: await uiSnapshot() } };
+            }
+            case 'type': {
+                if (typeof body.text !== 'string') {
+                    return { status: 400, body: { ok: false, error: 'Missing text' } };
+                }
+                await typeText(body.text, body.mode === 'append' ? 'append' : 'replace');
+                return { body: { ok: true } };
+            }
+            case 'focus': {
+                if (typeof body.text !== 'string' || body.text === '') {
+                    return { status: 400, body: { ok: false, error: 'text is required' } };
+                }
+                return { body: { ok: true, snapshot: await focusOn(body.text) } };
+            }
+            case 'wait': {
+                const snapshot = await waitFor({
+                    text: typeof body.text === 'string' ? body.text : undefined,
+                    gone: typeof body.gone === 'string' ? body.gone : undefined,
+                    focus: typeof body.focus === 'string' ? body.focus : undefined,
+                    exited: body.exited === true,
+                    timeoutMs: typeof body.timeoutMs === 'number' ? body.timeoutMs : undefined,
+                });
+                return { body: { ok: true, snapshot, running } };
+            }
+            case 'logs': {
+                return { body: { ok: true, logs: logs(typeof body.since === 'number' ? body.since : 0) } };
             }
             case 'stop': {
                 return {
@@ -924,5 +1178,10 @@ export function createHost(options: CreateHostOptions): TvemuHost {
         urls,
         screenshot,
         evaluate,
+        uiSnapshot,
+        typeText,
+        focusOn,
+        waitFor,
+        logs,
     };
 }
