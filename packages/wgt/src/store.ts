@@ -168,6 +168,10 @@ export function createAppStore(home: string, options?: CreateAppStoreOptions): A
                     if (JSON.stringify(finalManifest) !== JSON.stringify(resolvedManifest)) {
                         throw new WgtError('INVALID_CONFIG', 'Package changed during installation');
                     }
+                    const execStat = await lstat(join(content, 'bin', extractedUiApp.exec)).catch(() => null);
+                    if (!execStat || !execStat.isFile()) {
+                        throw new WgtError('INVALID_CONFIG', `Package has no bin/${extractedUiApp.exec}`);
+                    }
                 } else {
                     await extractWgt(packagePath, content);
                     const extractedManifest = await readFile(join(content, 'config.xml'), 'utf8');

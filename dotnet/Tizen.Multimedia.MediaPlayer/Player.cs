@@ -154,8 +154,7 @@ public class Player : IDisposable
     }
     public virtual void Stop()
     {
-        Validate(PlayerState.Playing, PlayerState.Paused, PlayerState.Ready);
-        if (state == PlayerState.Ready) return;
+        Validate(PlayerState.Playing, PlayerState.Paused);
         state = PlayerState.Ready;
         position = 0;
         Send("stop");

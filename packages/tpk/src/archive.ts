@@ -7,6 +7,7 @@ import { open, type Entry, type ZipFile } from 'yauzl';
 import { parseTizenManifest, type TpkManifest } from './manifest.js';
 import { TpkError } from './tpk-error.js';
 
+const TPK_MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
 export const TPK_MAX_TOTAL_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024;
 
 function archiveError(error: unknown): TpkError {
@@ -74,7 +75,16 @@ function entryStream(zip: ZipFile, entry: Entry): Promise<Readable> {
 async function readEntryText(zip: ZipFile, entry: Entry): Promise<string> {
     const stream = await entryStream(zip, entry);
     const buffers: Buffer[] = [];
-    for await (const chunk of stream) buffers.push(Buffer.from(chunk));
+    let size = 0;
+    for await (const chunk of stream) {
+        const buffer = Buffer.from(chunk);
+        size += buffer.length;
+        if (size > TPK_MAX_MANIFEST_BYTES) {
+            stream.destroy();
+            throw new TpkError('TOO_LARGE', 'tizen-manifest.xml exceeds the size limit');
+        }
+        buffers.push(buffer);
+    }
     return Buffer.concat(buffers).toString('utf8');
 }
 
@@ -127,7 +137,15 @@ export async function extractTpk(tpkPath: string, destDir: string): Promise<TpkM
     let author = false;
     let distributor = false;
     let totalUncompressedSize = 0;
+    const seenNames = new Set<string>();
     await visitArchive(tpkPath, async (zip, entry) => {
+        const foldedName = entry.fileName.replace(/\/$/, '').toLowerCase();
+        if (!entry.fileName.endsWith('/')) {
+            if (seenNames.has(foldedName)) {
+                throw new TpkError('UNSAFE_ENTRY', `Duplicate or case-colliding entry: ${entry.fileName}`);
+            }
+            seenNames.add(foldedName);
+        }
         if (entry.fileName === 'author-signature.xml') {
             author = true;
             return;

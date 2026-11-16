@@ -102,7 +102,7 @@ function parseApp(element: XmlElement): TpkApp[] {
 
 export function parseTizenManifest(xml: string): Omit<TpkManifest, 'signed'> {
     try {
-        if (/<!DOCTYPE/i.test(xml) || XMLValidator.validate(xml) !== true) {
+        if (/<!DOCTYPE/i.test(xml.replace(/<!--[\s\S]*?-->/g, '')) || XMLValidator.validate(xml) !== true) {
             throw new TpkError('INVALID_MANIFEST', 'Malformed or unsupported tizen-manifest.xml');
         }
         const parser = new XMLParser({
@@ -112,6 +112,7 @@ export function parseTizenManifest(xml: string): Omit<TpkManifest, 'signed'> {
             parseTagValue: false,
             parseAttributeValue: false,
             trimValues: false,
+            htmlEntities: true,
         });
         const roots = elements(parser.parse(xml) as XmlRecord[]);
         const root = roots[0];
@@ -154,5 +155,16 @@ export function mainUiApp(manifest: TpkManifest): TpkApp {
             `Application "${app.appId}" is a native (${nativeType}, capp/c++app) package; native apps need the Tizen OS and are not supported`,
         );
     }
+    if (app.appId.trim() === '') {
+        throw new TpkError('INVALID_MANIFEST', 'The ui-application has no appid');
+    }
+    if (!isSafeExec(app.exec)) {
+        throw new TpkError('INVALID_MANIFEST', `Application "${app.appId}" has an exec that is not a file inside bin/: "${app.exec}"`);
+    }
     return app;
+}
+
+function isSafeExec(exec: string): boolean {
+    if (exec.trim() === '' || exec.startsWith('/') || exec.includes('\\') || exec.includes('\0') || /^[a-zA-Z]:/.test(exec)) return false;
+    return exec.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
 }

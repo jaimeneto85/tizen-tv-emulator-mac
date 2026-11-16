@@ -121,14 +121,7 @@ public static class Preference
                 if (changed == null && !Contains(key)) throw new ArgumentException("Preference key does not exist.", nameof(key));
                 changed += value;
             }
-            remove
-            {
-                changed -= value;
-                if (changed == null)
-                {
-                    lock (Gate) Contexts.Remove(ContextKey(key));
-                }
-            }
+            remove => changed -= value;
         }
         internal void Fire() => changed?.Invoke(null, new() { Key = key });
     }

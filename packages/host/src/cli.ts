@@ -571,9 +571,7 @@ export async function runCli(argv: string[], io: CliIo = DEFAULT_IO, env: NodeJS
                         throw new Error(`App ${installed.manifest.appId} is not a .tpk package`);
                     }
                     const execName = installed.manifest.exec ?? installed.manifest.contentSrc;
-                    const assemblyPath = path.isAbsolute(execName)
-                        ? execName
-                        : path.join(store.contentDir(installed), 'bin', execName);
+                    const assemblyPath = path.join(store.contentDir(installed), 'bin', execName);
                     const report = await inspectDotnetAssembly({
                         command: runtime.command,
                         hostDllPath: runtime.hostDllPath,

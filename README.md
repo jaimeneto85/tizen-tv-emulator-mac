@@ -148,6 +148,8 @@ Default device identity fields are generic non-Samsung placeholders shaped after
 - **Limitations:**
   - **No Tizen OS:** System daemons, Linux services, and hardware platform APIs outside the shims are not present.
   - **API subset:** the runtime re-implements part of `Tizen.NUI`, `Tizen.Applications`, `Tizen.Multimedia`, `Tizen.System` and `Tizen.Log` (see `dotnet/coverage.md`). `View.Layout` layouts, `ScrollableBase` and `Tizen.NUI.Components` are not implemented yet; `tvemu inspect` lists every member an app needs that is missing.
+- **`inspect` checks signatures, not behaviour.** A member reported as supported can still reject some arguments at run time (for example a `Display` with `uiSync`, a non-URI media source, or a background visual other than color/border).
+- **Disposing a view does not dispose its children.** They are detached and stay usable, as on a TV; their renderer nodes live until the app disposes them.
   - **Unverified against hardware:** font DPI (96 by default, `nuiDpi` in the profile), native key codes and video playback were not compared with a physical TV.
   - **Native C/C++ `.tpk` unsupported:** `capp` / `c++app` packages require the Tizen OS and are rejected at install time.
   - **DOM approximation of DALi:** `@tvemu/nui-renderer` approximates DALi views, text, borders, images, and fields using HTML/CSS inside Chromium; subtle visual differences can occur.

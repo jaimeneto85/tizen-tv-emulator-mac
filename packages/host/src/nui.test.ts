@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -415,6 +416,39 @@ describe('NUI host and CLI support', () => {
             await host.stop();
         }
         expect(isProcessAlive(pid)).toBe(false);
+    });
+
+    it('keeps a single runtime alive when two launches overlap', async () => {
+        const root = await mkdtemp(path.join(os.tmpdir(), 'tvemu-nui-overlap-'));
+        tempDirs.push(root);
+        const home = path.join(root, 'home');
+        const fakeScript = path.join(root, 'fake-nui.mjs');
+        await writeFile(fakeScript, FAKE_NUI_SCRIPT);
+        await installFakeTpkApp(home);
+        const runtimePids = (): number[] => {
+            const found = spawnSync('pgrep', ['-f', fakeScript], { encoding: 'utf8' });
+            return found.stdout.split('\n').filter(Boolean).map(Number);
+        };
+
+        const fakeEngine = createFakeEngine();
+        const host = createHost({
+            home,
+            profile: DEFAULT_PROFILES[0]!,
+            sdbPort: false,
+            env: { ...process.env, TVEMU_NUI_COMMAND: process.execPath, TVEMU_NUI_HOST: fakeScript },
+            createEngine: () => fakeEngine.engine,
+        });
+
+        await host.start();
+        try {
+            await Promise.all([host.launch('org.demo.nui.app'), host.launch('org.demo.nui.app')]);
+            await waitForCondition(async () => runtimePids().length === 1);
+            expect(runtimePids()).toHaveLength(1);
+        } finally {
+            await host.stop();
+        }
+        await waitForCondition(async () => runtimePids().length === 0);
+        expect(runtimePids()).toHaveLength(0);
     });
 });
 

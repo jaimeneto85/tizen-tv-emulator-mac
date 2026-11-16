@@ -110,7 +110,7 @@ public class Color : Disposable
     public static readonly Color Black = new(0,0,0,1);
     public static readonly Color White = new(1,1,1,1);
     public static readonly Color Red = new(1,0,0,1);
-    public static readonly Color Green = new(0,0.5f,0,1);
+    public static readonly Color Green = new(0,1,0,1);
     public static readonly Color Blue = new(0,0,1,1);
     public static implicit operator Vector4(Color value) => new(value.R,value.G,value.B,value.A);
     public static implicit operator Color(Vector4 value) => new(value.X,value.Y,value.Z,value.W);

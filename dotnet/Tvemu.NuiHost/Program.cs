@@ -100,8 +100,10 @@ public sealed class ApplicationLoadContext : AssemblyLoadContext
             var existing = Default.Assemblies.FirstOrDefault(a => a.GetName().Name == name);
             if (existing is not null) return existing;
             var shim = Path.Combine(shimDirectory, name + ".dll");
-            if (!File.Exists(shim)) throw new FileNotFoundException($"Missing Tizen shim: {name}. Run Tvemu.NuiHost inspect to identify unsupported APIs.", shim);
-            return Default.LoadFromAssemblyPath(shim);
+            if (File.Exists(shim)) return Default.LoadFromAssemblyPath(shim);
+            var bundled = Path.Combine(binaryDirectory, name + ".dll");
+            if (File.Exists(bundled)) return LoadFromAssemblyPath(bundled);
+            throw new FileNotFoundException($"Missing Tizen shim: {name}. Run Tvemu.NuiHost inspect to identify unsupported APIs.", shim);
         }
         if (frameworkNames.Contains(name) || name == "Tvemu.Runtime") return Default.LoadFromAssemblyName(assemblyName);
         var path = Path.Combine(binaryDirectory, name + ".dll");

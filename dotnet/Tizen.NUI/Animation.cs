@@ -52,8 +52,21 @@ public class Animation : BaseHandle
     {
         RuntimeEngine.AssertUiThread();
         if(startTime<0 || endTime<startTime) throw new ArgumentOutOfRangeException(nameof(startTime));
-        if(property is not ("Position" or "Position2D" or "PositionX" or "PositionY" or "Size" or "Size2D" or "SizeWidth" or "SizeHeight" or "Opacity" or "Scale")) RuntimeEngine.Missing($"Tizen.NUI.Animation::AnimateTo({property})");
-        tracks.Add(new Track(target,property,destinationValue,startTime,endTime,alphaFunction ?? new AlphaFunction()));
+        if(string.IsNullOrEmpty(property)) throw new ArgumentNullException(nameof(property));
+        var name = char.ToUpperInvariant(property[0])+property[1..];
+        if(name is not ("Position" or "Position2D" or "PositionX" or "PositionY" or "Size" or "Size2D" or "SizeWidth" or "SizeHeight" or "Opacity" or "Scale")) RuntimeEngine.Missing($"Tizen.NUI.Animation::AnimateTo({property})");
+        var destination = Coerce(typeof(View).GetProperty(name)!.PropertyType,destinationValue) ?? throw new ArgumentException("Invalid "+nameof(destinationValue));
+        tracks.Add(new Track(target,name,destination,startTime,endTime,alphaFunction ?? new AlphaFunction()));
+    }
+    static object? Coerce(Type propertyType,object? value)
+    {
+        if(value == null) return null;
+        if(propertyType.IsInstanceOfType(value)) return value;
+        if(propertyType == typeof(float)) return value is int or long or double or short or byte ? Convert.ToSingle(value) : null;
+        if(value is not Vector3 vector) return null;
+        if(propertyType == typeof(Position)) return new Position(vector.X,vector.Y,vector.Z);
+        if(propertyType == typeof(Size)) return new Size(vector.X,vector.Y,vector.Z);
+        return null;
     }
     public void AnimateTo(Animatable target,string property,object destinationValue,AlphaFunction? alphaFunction = null)
     {

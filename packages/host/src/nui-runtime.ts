@@ -358,6 +358,31 @@ export async function createNuiSession(options: CreateNuiSessionOptions): Promis
     let server: Server | null = null;
     let child: ChildProcess | null = null;
     let socketCloseTimer: ReturnType<typeof setTimeout> | null = null;
+    const openSockets = new Set<Socket>();
+
+    const childAlive = (target: ChildProcess | null): target is ChildProcess =>
+        target !== null && target.exitCode === null && target.signalCode === null;
+
+    const reapChild = (): void => {
+        const target = child;
+        if (!childAlive(target)) {
+            return;
+        }
+        try {
+            target.kill('SIGTERM');
+        } catch {
+        }
+        const killTimer = setTimeout(() => {
+            if (childAlive(target)) {
+                try {
+                    target.kill('SIGKILL');
+                } catch {
+                }
+            }
+        }, KILL_GRACE_MS);
+        killTimer.unref();
+        target.once('exit', () => clearTimeout(killTimer));
+    };
 
     const pushStderr = (chunk: string): void => {
         for (const rawLine of chunk.split(/\r?\n/)) {
@@ -376,9 +401,10 @@ export async function createNuiSession(options: CreateNuiSessionOptions): Promis
             clearTimeout(socketCloseTimer);
             socketCloseTimer = null;
         }
-        if (activeSocket && !activeSocket.destroyed) {
-            activeSocket.destroy();
+        for (const socket of openSockets) {
+            socket.destroy();
         }
+        openSockets.clear();
         activeSocket = null;
         if (server) {
             const activeServer = server;
@@ -401,7 +427,6 @@ export async function createNuiSession(options: CreateNuiSessionOptions): Promis
             return;
         }
         ended = true;
-        process.off('exit', onProcessExit);
         cleanupTransport();
         options.onEnded(info);
     };
@@ -417,7 +442,11 @@ export async function createNuiSession(options: CreateNuiSessionOptions): Promis
             return;
         }
         const msg = parsed as NuiRuntimeMessage;
-        if (!authenticated) {
+        if (activeSocket !== socket) {
+            if (activeSocket) {
+                socket.destroy();
+                return;
+            }
             const rawToken = (parsed as { token?: unknown }).token;
             if (msg.t !== 'hello' || typeof rawToken !== 'string' || !tokensEqual(rawToken, token)) {
                 socket.destroy();
@@ -481,12 +510,7 @@ export async function createNuiSession(options: CreateNuiSessionOptions): Promis
             if (child && child.exitCode === null && child.signalCode === null) {
                 if (!socketCloseTimer) {
                     socketCloseTimer = setTimeout(() => {
-                        if (child && child.exitCode === null && child.signalCode === null) {
-                            try {
-                                child.kill('SIGTERM');
-                            } catch {
-                            }
-                        }
+                        reapChild();
                         finish({
                             code: protocolExit?.code ?? 0,
                             reason: protocolExit?.reason ?? 'app-exit',
@@ -507,10 +531,11 @@ export async function createNuiSession(options: CreateNuiSessionOptions): Promis
     };
 
     const tcpServer = createServer((socket) => {
-        if (activeSocket && activeSocket !== socket) {
+        if (activeSocket || ended) {
             socket.destroy();
             return;
         }
+        openSockets.add(socket);
         let buffer: Buffer = Buffer.alloc(0);
         socket.on('data', (chunk: Buffer) => {
             buffer = buffer.length === 0 ? chunk : Buffer.concat([buffer, chunk]);
@@ -538,20 +563,17 @@ export async function createNuiSession(options: CreateNuiSessionOptions): Promis
         });
         socket.on('error', () => {});
         socket.on('close', () => {
-            if (activeSocket === socket) {
+            openSockets.delete(socket);
+            const wasRuntimeSocket = activeSocket === socket;
+            if (wasRuntimeSocket) {
                 activeSocket = null;
             }
-            if (ended || terminating) {
+            if (ended || terminating || !wasRuntimeSocket) {
                 return;
             }
-            if ((authenticated || protocolExit) && !socketCloseTimer) {
+            if (!socketCloseTimer) {
                 socketCloseTimer = setTimeout(() => {
-                    if (child && child.exitCode === null && child.signalCode === null) {
-                        try {
-                            child.kill('SIGTERM');
-                        } catch {
-                        }
-                    }
+                    reapChild();
                     finish({
                         code: protocolExit?.code ?? 1,
                         reason: protocolExit?.reason ?? 'socket-closed',
@@ -619,6 +641,7 @@ export async function createNuiSession(options: CreateNuiSessionOptions): Promis
     });
 
     spawned.on('exit', (code, signal) => {
+        process.off('exit', onProcessExit);
         if (terminating) {
             return;
         }
@@ -647,6 +670,11 @@ export async function createNuiSession(options: CreateNuiSessionOptions): Promis
         async terminate(): Promise<void> {
             if (ended) {
                 cleanupTransport();
+                const lingering = child;
+                if (childAlive(lingering)) {
+                    reapChild();
+                    await new Promise<void>((resolve) => lingering.once('exit', () => resolve()));
+                }
                 return;
             }
             terminating = true;

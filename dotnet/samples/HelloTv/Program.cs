@@ -155,7 +155,7 @@ public sealed class Program : NUIApplication
             var animation = new Animation(120);
             animation.AnimateTo(animated, "Position", new Position(110, 220));
             animation.AnimateTo(animated, "Size", new Size(80, 90));
-            animation.AnimateTo(animated, "Opacity", 0.25f);
+            animation.AnimateTo(animated, "opacity", 0.25f);
             animation.AnimateTo(animated, "Scale", new Vector3(2, 3, 1));
             var animationClock = System.Diagnostics.Stopwatch.StartNew();
             animation.Finished += (_, _) =>

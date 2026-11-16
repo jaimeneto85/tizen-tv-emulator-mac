@@ -193,6 +193,7 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
     const players = new Map<number, PlayerEntry>();
     const fieldInputs = new Set<HTMLInputElement>();
     const suppressedKeyCodes = new Set<number>();
+    const forwardedKeyCodes = new Set<number>();
 
     let focusedId = 0;
     let imeId = 0;
@@ -243,8 +244,8 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
         const rect = typeof node.el.getBoundingClientRect === 'function'
             ? node.el.getBoundingClientRect()
             : { width: 0, height: 0 };
-        let measuredW = Math.ceil(rect.width || node.el.offsetWidth || 0);
-        let measuredH = Math.ceil(rect.height || node.el.offsetHeight || 0);
+        let measuredW = Math.ceil(node.el.offsetWidth || rect.width || 0);
+        let measuredH = Math.ceil(node.el.offsetHeight || rect.height || 0);
         if (node.kind === 'image' && node.imgEl) {
             if (node.props.w === null && measuredW === 0 && node.imgEl.naturalWidth > 0) {
                 measuredW = node.imgEl.naturalWidth;
@@ -567,18 +568,21 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
             if (node.kind === 'text') {
                 updateTextLayout(node);
             }
-            if (props.w === null) {
+            if (props.w === null || node.props.h === null) {
                 node.dirtyMeasure = true;
             }
         }
         if (props.h !== undefined) {
             node.el.style.height = props.h === null ? 'auto' : `${props.h}px`;
-            if (props.h === null) {
+            if (props.h === null || node.props.w === null) {
                 node.dirtyMeasure = true;
             }
         }
         if (props.visible !== undefined) {
             node.el.style.display = props.visible ? (node.kind === 'text' ? 'flex' : 'block') : 'none';
+            if (props.visible && (node.props.w === null || node.props.h === null)) {
+                node.dirtyMeasure = true;
+            }
         }
         if (props.opacity !== undefined) {
             node.el.style.opacity = String(clampAlpha(props.opacity));
@@ -1121,6 +1125,7 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
         if (!mapped) {
             return;
         }
+        forwardedKeyCodes.add(code);
         event.preventDefault();
         sendEvent({
             t: 'key',
@@ -1136,8 +1141,9 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
             suppressedKeyCodes.delete(code);
             return;
         }
+        const downWasForwarded = forwardedKeyCodes.delete(code);
         const focusedInput = activeFieldInput();
-        if (focusedInput && shouldEditFocusedInput(event, focusedInput)) {
+        if (!downWasForwarded && focusedInput && shouldEditFocusedInput(event, focusedInput)) {
             return;
         }
         const mapped = resolveRemoteKey(code);

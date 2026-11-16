@@ -257,3 +257,40 @@ describe('real packages from TVEMU_TEST_TPKS', () => {
         }
     });
 });
+
+describe('launchable application checks', () => {
+    const withExec = (exec: string): TpkManifest => ({
+        ...parseTizenManifest(manifest.replace('exec="Sample.Tv.dll"', `exec="${exec}"`)),
+        signed: { author: false, distributor: false },
+    });
+
+    it.each(['../../outside.dll', '/etc/hosts', '', 'sub/../x.dll', 'C:/x.dll'])('rejects exec %j', (exec) => {
+        expect(() => mainUiApp(withExec(exec))).toThrowError(expect.objectContaining({ code: 'INVALID_MANIFEST' }));
+    });
+
+    it('rejects an empty appid', () => {
+        const parsed = { ...parseTizenManifest(manifest.replace('appid="SampleTV.Sample"', 'appid=""')), signed: { author: false, distributor: false } };
+        expect(() => mainUiApp(parsed)).toThrowError(expect.objectContaining({ code: 'INVALID_MANIFEST' }));
+    });
+
+    it('accepts a nested exec inside bin', () => {
+        expect(mainUiApp(withExec('net/App.dll')).exec).toBe('net/App.dll');
+    });
+
+    it('reports case-colliding entries as unsafe instead of not-a-tpk', async () => {
+        const directory = await temporaryDirectory();
+        const path = await fixture(directory, { 'tizen-manifest.xml': manifest, 'bin/Foo.dll': 'a', 'bin/foo.dll': 'b' });
+        await expect(extractTpk(path, join(directory, 'out'))).rejects.toMatchObject({ code: 'UNSAFE_ENTRY' });
+    });
+
+    it('rejects an oversized manifest', async () => {
+        const directory = await temporaryDirectory();
+        const path = await fixture(directory, { 'tizen-manifest.xml': manifest + ' '.repeat(5 * 1024 * 1024) });
+        await expect(readTpkManifest(path)).rejects.toMatchObject({ code: 'TOO_LARGE' });
+    });
+
+    it('decodes numeric character references and ignores DOCTYPE inside comments', () => {
+        const xml = manifest.replace('<label>Sample</label>', '<!-- <!DOCTYPE x> --><label>A &#38; B</label>');
+        expect(parseTizenManifest(xml).label).toBe('A & B');
+    });
+});

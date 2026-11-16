@@ -442,7 +442,7 @@ export function createHost(options: CreateHostOptions): TvemuHost {
         const runtime = await checkNuiRuntimeAvailable(options.env);
         const contentDir = appStore.contentDir(app);
         const execName = app.manifest.exec ?? app.manifest.contentSrc;
-        const assemblyPath = path.isAbsolute(execName) ? execName : path.join(contentDir, 'bin', execName);
+        const assemblyPath = path.join(contentDir, 'bin', execName);
 
         try {
             const report = await inspectDotnetAssembly({
@@ -564,7 +564,23 @@ export function createHost(options: CreateHostOptions): TvemuHost {
         }
     }
 
-    async function launch(appId: string, _launchOptions?: LaunchOptions): Promise<void> {
+    let lifecycleQueue: Promise<unknown> = Promise.resolve();
+
+    function serialized<T>(task: () => Promise<T>): Promise<T> {
+        const result = lifecycleQueue.then(task, task);
+        lifecycleQueue = result.catch(() => {});
+        return result;
+    }
+
+    function launch(appId: string, launchOptions?: LaunchOptions): Promise<void> {
+        return serialized(() => launchNow(appId, launchOptions));
+    }
+
+    function terminate(appId: string): Promise<void> {
+        return serialized(() => terminateNow(appId));
+    }
+
+    async function launchNow(appId: string, _launchOptions?: LaunchOptions): Promise<void> {
         if (!httpServer || httpServer.port() <= 0) {
             throw new Error('Host is not started');
         }
@@ -597,7 +613,7 @@ export function createHost(options: CreateHostOptions): TvemuHost {
         }
     }
 
-    async function terminate(appId: string): Promise<void> {
+    async function terminateNow(appId: string): Promise<void> {
         if (running && running.manifest.appId !== appId && running.manifest.packageId !== appId) {
             throw new Error(`App is not running: ${appId}`);
         }
