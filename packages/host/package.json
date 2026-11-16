@@ -1,0 +1,40 @@
+{
+    "name": "@tvemu/host",
+    "version": "0.1.0",
+    "license": "MIT",
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "bin": {
+        "tvemu": "./dist/cli.js"
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "typecheck": "tsc -p tsconfig.json --noEmit",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "@tvemu/engine": "workspace:*",
+        "@tvemu/protocol": "workspace:*",
+        "@tvemu/remote-ui": "workspace:*",
+        "@tvemu/wgt": "workspace:*",
+        "ws": "^8.18.0"
+    },
+    "optionalDependencies": {
+        "@tvemu/sdb-bridge": "workspace:*",
+        "@tvemu/tizen-api": "workspace:*"
+    },
+    "devDependencies": {
+        "@types/node": "^22.10.0",
+        "@types/ws": "^8.5.13",
+        "fflate": "^0.8.2",
+        "typescript": "^5.7.0",
+        "vitest": "^2.1.0"
+    }
+}

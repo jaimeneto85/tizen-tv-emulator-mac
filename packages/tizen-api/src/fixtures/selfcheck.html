@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>tvemu self-check</title></head>
+<body>
+<pre id="result">pending</pre>
+<script src="../../dist/tizen-api.js"></script>
+<script>
+(function () {
+    var out = {};
+    try {
+        out.hasTizen = typeof window.tizen === 'object';
+        out.hasWebapis = typeof window.webapis === 'object';
+        out.hasWebAPIException = typeof tizen.WebAPIException === 'function';
+        out.errorName = new tizen.WebAPIException(17).name;
+        out.keysBefore = tizen.tvinputdevice.getSupportedKeys().length;
+        var swallowed = true;
+        window.addEventListener('keydown', function () { swallowed = false; });
+        var ev = new window.Event('keydown', { cancelable: true });
+        Object.defineProperty(ev, 'keyCode', { value: 10252 });
+        window.dispatchEvent(ev);
+        out.unregisteredKeySwallowed = swallowed && ev.defaultPrevented;
+        tizen.tvinputdevice.registerKey('MediaPlayPause');
+        var delivered = false;
+        var ev2 = new window.Event('keydown', { cancelable: true });
+        Object.defineProperty(ev2, 'keyCode', { value: 10252 });
+        window.addEventListener('keydown', function () { delivered = true; });
+        window.dispatchEvent(ev2);
+        out.registeredKeyDelivered = delivered && !ev2.defaultPrevented;
+        var stateNone = webapis.avplay.getState();
+        var openResult = webapis.avplay.open('http://localhost/video.mp4');
+        var stateIdle = webapis.avplay.getState();
+        webapis.avplay.close();
+        var stateClosed = webapis.avplay.getState();
+        out.avplay = {
+            stateNone: stateNone,
+            openResult: openResult,
+            stateIdle: stateIdle,
+            stateClosed: stateClosed,
+            videoInsertedFirst: document.body.firstChild && document.body.firstChild.id === 'tvemu-avplay-video'
+        };
+        out.model = webapis.productinfo.getModel();
+        out.ok = true;
+    } catch (error) {
+        out.ok = false;
+        out.error = String(error && error.message ? error.message : error);
+    }
+    document.getElementById('result').textContent = JSON.stringify(out);
+})();
+</script>
+</body>
+</html>

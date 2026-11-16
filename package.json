@@ -1,0 +1,20 @@
+{
+    "name": "tizen-tv-emulator-mac",
+    "private": true,
+    "version": "0.1.0",
+    "description": "Open-source Tizen TV web-app emulator for macOS, including Apple Silicon",
+    "license": "MIT",
+    "type": "module",
+    "engines": { "node": ">=22" },
+    "scripts": {
+        "build": "pnpm -r --workspace-concurrency=1 run build",
+        "test": "vitest run",
+        "typecheck": "pnpm -r run typecheck",
+        "tvemu": "node packages/host/dist/cli.js"
+    },
+    "devDependencies": {
+        "@types/node": "^22.10.0",
+        "typescript": "^5.7.0",
+        "vitest": "^2.1.0"
+    }
+}

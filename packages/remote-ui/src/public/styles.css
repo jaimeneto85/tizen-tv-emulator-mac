@@ -1,0 +1,371 @@
+:root {
+    --bg-canvas: #0f1419;
+    --bg-handset: #1b222c;
+    --bg-panel: #161c24;
+    --bg-key: #27313f;
+    --bg-key-hover: #323f52;
+    --bg-key-active: #475974;
+    --border-subtle: #2f3b4c;
+    --text-primary: #eef2f6;
+    --text-muted: #9aa7b8;
+    --accent: #3d8bfd;
+    --danger: #d94b57;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    background: radial-gradient(circle at top, #182230 0%, var(--bg-canvas) 65%);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+.tvemu-shell {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 16px;
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 16px;
+    align-items: start;
+}
+
+.remote-handset {
+    width: 100%;
+    max-width: 328px;
+    margin: 0 auto;
+    padding: 16px 14px 20px;
+    background: linear-gradient(180deg, #222b37 0%, var(--bg-handset) 100%);
+    border: 1px solid var(--border-subtle);
+    border-radius: 26px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    user-select: none;
+}
+
+.remote-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 4px;
+}
+
+.brand-mark {
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.connection-pill {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #2b3544;
+    color: var(--text-muted);
+}
+
+.connection-pill.is-connected {
+    background: #173a2b;
+    color: #7ee2b8;
+}
+
+.remote-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.numpad-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+
+.rocker-band {
+    display: grid;
+    grid-template-columns: 1fr 0.9fr 1fr;
+    gap: 8px;
+    align-items: stretch;
+}
+
+.rocker-column,
+.rocker-center {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.dpad-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    padding: 6px;
+    background: #141a22;
+    border-radius: 20px;
+    border: 1px solid #263140;
+}
+
+.dpad-spacer {
+    display: block;
+}
+
+.nav-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+}
+
+.color-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+}
+
+.media-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+}
+
+.remote-key {
+    appearance: none;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: var(--bg-key);
+    color: var(--text-primary);
+    font: inherit;
+    font-weight: 600;
+    min-height: 38px;
+    padding: 6px 8px;
+    cursor: pointer;
+    transition: background-color 100ms ease, transform 80ms ease, opacity 120ms ease;
+    touch-action: manipulation;
+}
+
+.remote-key:hover {
+    background: var(--bg-key-hover);
+}
+
+.remote-key:active,
+.remote-key.is-pressed {
+    background: var(--bg-key-active);
+    transform: scale(0.97);
+}
+
+.remote-key.is-dimmed {
+    opacity: 0.42;
+    border-style: dashed;
+}
+
+.key-compact {
+    font-size: 11px;
+    padding: 6px 4px;
+}
+
+.key-dpad {
+    min-height: 44px;
+    font-size: 15px;
+}
+
+.key-enter {
+    min-height: 44px;
+    border-radius: 999px;
+    background: #2f4b75;
+    border-color: #466ea8;
+}
+
+.key-danger {
+    background: #46232a;
+    border-color: #6b303a;
+}
+
+.key-color {
+    min-height: 30px;
+    font-size: 11px;
+    color: #ffffff;
+}
+
+.key-red {
+    background: #9c2732;
+    border-color: #c23946;
+}
+
+.key-green {
+    background: #1f7342;
+    border-color: #2b9457;
+}
+
+.key-yellow {
+    background: #9d7613;
+    border-color: #c2951d;
+}
+
+.key-blue {
+    background: #205299;
+    border-color: #2d6dc4;
+}
+
+.key-record {
+    color: #ff6b78;
+}
+
+.side-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+.panel-card {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: 14px;
+    padding: 12px 14px;
+}
+
+.panel-card h2 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+.panel-row-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.panel-row-header h2 {
+    margin: 0;
+}
+
+.profile-label,
+.running-app {
+    margin: 0;
+    font-weight: 600;
+    word-break: break-word;
+}
+
+.profile-meta {
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.app-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.app-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    background: #1c2430;
+    border: 1px solid #293445;
+    border-radius: 10px;
+}
+
+.app-info {
+    min-width: 0;
+}
+
+.app-name {
+    display: block;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.app-id {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.action-button {
+    appearance: none;
+    border: 1px solid #3c69ad;
+    background: var(--accent);
+    color: #ffffff;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.action-button:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.action-danger {
+    background: var(--danger);
+    border-color: #b43642;
+}
+
+.log-list {
+    height: 220px;
+    overflow-y: auto;
+    background: #0d1117;
+    border: 1px solid #242e3c;
+    border-radius: 8px;
+    padding: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.log-entry {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.log-warn {
+    color: #f2c96d;
+}
+
+.log-error {
+    color: #ff7b86;
+}
+
+@media (max-width: 720px) {
+    .tvemu-shell {
+        grid-template-columns: 1fr;
+        padding: 12px;
+    }
+
+    .remote-handset {
+        max-width: 336px;
+        padding: 12px 10px 16px;
+    }
+}

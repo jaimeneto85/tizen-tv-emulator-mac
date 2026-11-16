@@ -1,0 +1,29 @@
+{
+    "name": "@tvemu/remote-ui",
+    "version": "0.1.0",
+    "license": "MIT",
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.json && mkdir -p dist/public && cp src/public/index.html src/public/styles.css dist/public/",
+        "typecheck": "tsc -p tsconfig.json --noEmit",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "@tvemu/protocol": "workspace:*"
+    },
+    "devDependencies": {
+        "@types/jsdom": "^21.1.7",
+        "@types/node": "^22.10.0",
+        "jsdom": "^25.0.1",
+        "typescript": "^5.7.0",
+        "vitest": "^2.1.0"
+    }
+}
