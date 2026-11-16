@@ -1,4 +1,4 @@
-export { CdpClient, fetchPageTargetWsUrl, waitForDevToolsActivePort, type DevToolsEndpoint } from './cdp.js';
+export { CdpClient, fetchPageTargetWsUrl, parseDevToolsAnnouncement, waitForDevToolsActivePort, type DevToolsEndpoint } from './cdp.js';
 export { createChromiumEngine, type ChromiumEngineOptions } from './chromium-engine.js';
 export {
     downloadEngine,

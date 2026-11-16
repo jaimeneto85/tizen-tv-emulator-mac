@@ -172,10 +172,24 @@ export class CdpClient {
     }
 }
 
+export function parseDevToolsAnnouncement(line: string): DevToolsEndpoint | null {
+    const match = /DevTools listening on ws:\/\/[^:/]+:(\d+)(\/\S+)/.exec(line);
+    if (!match) {
+        return null;
+    }
+    const port = Number.parseInt(match[1] ?? '', 10);
+    const browserPath = match[2];
+    if (!Number.isFinite(port) || port <= 0 || !browserPath) {
+        return null;
+    }
+    return { port, browserPath };
+}
+
 export async function waitForDevToolsActivePort(
     userDataDir: string,
     hasExited: () => string | null,
     timeoutMs = 15000,
+    announcedEndpoint: () => DevToolsEndpoint | null = () => null,
 ): Promise<DevToolsEndpoint> {
     const filePath = path.join(userDataDir, 'DevToolsActivePort');
     const deadline = Date.now() + timeoutMs;
@@ -183,6 +197,10 @@ export async function waitForDevToolsActivePort(
         const exitReason = hasExited();
         if (exitReason) {
             throw new Error(`Chromium exited before DevToolsActivePort was ready: ${exitReason}`);
+        }
+        const announced = announcedEndpoint();
+        if (announced) {
+            return announced;
         }
         try {
             const content = await readFile(filePath, 'utf8');

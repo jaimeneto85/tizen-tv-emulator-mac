@@ -85,7 +85,7 @@ When `--profile` is omitted, `tvemu` selects:
 - Or set `TVEMU_CHROMIUM_<milestone>=/path/to/Chromium.app/Contents/MacOS/Chromium`.
 - Or set `TVEMU_ENGINE_SEARCH_PATHS=/dir/containing/Chromium.app`.
 
-Only M69 has a verified SHA-256 in the registry; M76–M130 point to snapshot revisions probed via HTTP HEAD (`verified: false`, `sha256: null`).
+M69, M76, M85 and M130 have a verified SHA-256 in the registry; M94, M108 and M120 point to snapshot revisions probed via HTTP HEAD (`verified: false`, `sha256: null`).
 
 ## D-Pad & Remote Key Testing Workflow
 
@@ -105,12 +105,12 @@ Only M69 has a verified SHA-256 in the registry; M76–M130 point to snapshot re
 | Profile Name | Model Year | Tizen Version | Chromium Milestone | Registry Arch | Resolution |
 |---|---|---|---|---|---|
 | `tizen-5.5` | 2020 | 5.5 | M69 (verified) | `mac-x64` (Rosetta 2) | 1920x1080 |
-| `tizen-6.0` | 2021 | 6.0 | M76 | `mac-x64` (Rosetta 2) | 1920x1080 |
-| `tizen-6.5` | 2022 | 6.5 | M85 | `mac-x64` (Rosetta 2) | 1920x1080 |
+| `tizen-6.0` | 2021 | 6.0 | M76 (verified) | `mac-x64` (Rosetta 2) | 1920x1080 |
+| `tizen-6.5` | 2022 | 6.5 | M85 (verified) | `mac-x64` (Rosetta 2) | 1920x1080 |
 | `tizen-7.0` | 2023 | 7.0 | M94 | `mac-arm64` | 1920x1080 |
 | `tizen-8.0` | 2024 | 8.0 | M108 | `mac-arm64` | 1920x1080 |
 | `tizen-9.0` | 2025 | 9.0 | M120 | `mac-arm64` | 1920x1080 |
-| `tizen-10.0` | 2026 | 10.0 | M130 | `mac-arm64` | 1920x1080 |
+| `tizen-10.0` | 2026 | 10.0 | M130 (verified) | `mac-arm64` | 1920x1080 |
 
 Every profile uses the TV user-agent format without a `Chrome/` token:
 

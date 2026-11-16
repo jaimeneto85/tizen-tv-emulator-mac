@@ -10,7 +10,13 @@ import {
     type EngineStartOptions,
     type KeyAction,
 } from '@tvemu/protocol';
-import { CdpClient, fetchPageTargetWsUrl, waitForDevToolsActivePort } from './cdp.js';
+import {
+    CdpClient,
+    type DevToolsEndpoint,
+    fetchPageTargetWsUrl,
+    parseDevToolsAnnouncement,
+    waitForDevToolsActivePort,
+} from './cdp.js';
 import { buildChromiumLaunchArgs, cleanStaleUserDataLocks } from './launch-args.js';
 import { readExecutableVersion } from './plist.js';
 
@@ -192,6 +198,7 @@ export function createChromiumEngine(options: ChromiumEngineOptions): Engine {
                 milestone,
             });
 
+            let announcedEndpoint: DevToolsEndpoint | null = null;
             const spawned = spawn(options.executablePath, args, {
                 stdio: ['ignore', 'pipe', 'pipe'],
             });
@@ -207,6 +214,7 @@ export function createChromiumEngine(options: ChromiumEngineOptions): Engine {
             spawned.stderr?.on('data', (chunk: Buffer) => {
                 for (const line of chunk.toString().split(/\r?\n/)) {
                     if (line.trim()) {
+                        announcedEndpoint = announcedEndpoint ?? parseDevToolsAnnouncement(line);
                         logLine(`[chromium:stderr] ${line}`);
                     }
                 }
@@ -224,7 +232,12 @@ export function createChromiumEngine(options: ChromiumEngineOptions): Engine {
                 notifyExit(`Chromium exited with ${detail}`);
             });
 
-            const endpoint = await waitForDevToolsActivePort(startOptions.userDataDir, () => exitReason);
+            const endpoint = await waitForDevToolsActivePort(
+                startOptions.userDataDir,
+                () => exitReason,
+                15000,
+                () => announcedEndpoint,
+            );
             const pageWsUrl = await fetchPageTargetWsUrl(endpoint.port);
             const client = await CdpClient.connect(pageWsUrl);
             cdp = client;

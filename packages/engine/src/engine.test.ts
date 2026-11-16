@@ -10,6 +10,7 @@ import {
     buildChromiumLaunchArgs,
     cleanStaleUserDataLocks,
     downloadEngine,
+    parseDevToolsAnnouncement,
     resolveEngine,
     type EngineRegistryEntry,
 } from './index.js';
@@ -129,8 +130,8 @@ describe('registry and profiles', () => {
         expect(m130?.tizenVersion).toBe('10.0');
         expect(m130?.modelYear).toBe(2026);
         expect(m130?.revision).toBe(1356025);
-        expect(m130?.verified).toBe(false);
-        expect(m130?.sha256).toBeNull();
+        expect(m130?.verified).toBe(true);
+        expect(m130?.sha256).toBe('13e6e030825c21161fcb83de3800480271e04352bd5df86ee2bee0a942eee52b');
     });
 
     it('provides Smart TV default profiles for 2020-2026 with Emulator identity and no Chrome/ UA token', () => {
@@ -445,5 +446,17 @@ describe('downloadEngine', () => {
         } finally {
             await new Promise<void>((resolve) => server.close(() => resolve()));
         }
+    });
+});
+
+describe('parseDevToolsAnnouncement', () => {
+    it('reads the port and browser path from the stderr line', () => {
+        expect(
+            parseDevToolsAnnouncement('DevTools listening on ws://127.0.0.1:49593/devtools/browser/771c4404'),
+        ).toEqual({ port: 49593, browserPath: '/devtools/browser/771c4404' });
+    });
+
+    it('ignores unrelated lines', () => {
+        expect(parseDevToolsAnnouncement('Error writing DevTools active port to file')).toBeNull();
     });
 });

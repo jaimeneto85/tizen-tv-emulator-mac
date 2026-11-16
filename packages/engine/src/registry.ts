@@ -28,9 +28,9 @@ export const ENGINE_REGISTRY: readonly EngineRegistryEntry[] = [
         modelYear: 2021,
         platform: 'mac-x64',
         url: 'https://commondatastorage.googleapis.com/chromium-browser-snapshots/Mac/665002/chrome-mac.zip',
-        sha256: null,
+        sha256: '7c0ba93616f44a421330b1c1262e8899fbdf7916bed8b04c775e0426f6f35ec6',
         revision: 665002,
-        verified: false,
+        verified: true,
     },
     {
         milestone: 85,
@@ -38,9 +38,9 @@ export const ENGINE_REGISTRY: readonly EngineRegistryEntry[] = [
         modelYear: 2022,
         platform: 'mac-x64',
         url: 'https://commondatastorage.googleapis.com/chromium-browser-snapshots/Mac/782801/chrome-mac.zip',
-        sha256: null,
+        sha256: '87d494c3de7ee9de5195b3c3e829c465d4e9e5a83a61af3c3c5666726850277a',
         revision: 782801,
-        verified: false,
+        verified: true,
     },
     {
         milestone: 94,
@@ -78,9 +78,9 @@ export const ENGINE_REGISTRY: readonly EngineRegistryEntry[] = [
         modelYear: 2026,
         platform: 'mac-arm64',
         url: 'https://commondatastorage.googleapis.com/chromium-browser-snapshots/Mac_Arm/1356025/chrome-mac.zip',
-        sha256: null,
+        sha256: '13e6e030825c21161fcb83de3800480271e04352bd5df86ee2bee0a942eee52b',
         revision: 1356025,
-        verified: false,
+        verified: true,
     },
 ];
 
