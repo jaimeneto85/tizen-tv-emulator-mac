@@ -240,6 +240,9 @@ describe('nui-renderer bundle in jsdom', () => {
         h.applyFrame([['ime', 5, { panel: 'email', hidden: false }]]);
         expect(h.document.activeElement).toBe(input);
         expect(input.type).toBe('email');
+        expect(h.window.__tvemuNui.debug().keyboard.open).toBe(true);
+        h.window.__tvemuNui.hideKeyboard();
+        expect(h.window.__tvemuNui.debug().keyboard.open).toBe(false);
 
         const digitEvent = h.dispatchKey('keydown', 48, '0');
         expect(digitEvent.defaultPrevented).toBe(false);
@@ -288,6 +291,89 @@ describe('nui-renderer bundle in jsdom', () => {
 
         h.applyFrame([['ime', 0, {}]]);
         expect(h.document.activeElement).not.toBe(input);
+    });
+
+    it('shows an on-screen keyboard for the active field and types with remote keys', () => {
+        const h = loadRenderer();
+        cleanups.push(() => h.window.__tvemuNui.destroy());
+
+        h.applyFrame([
+            ['create', 7, 'field'],
+            ['set', 7, { x: 20, y: 20, w: 300, h: 50, placeholder: 'Email', maxLength: 6 }],
+            ['insert', 0, 7, 0],
+        ]);
+        const input = h.document.querySelector<HTMLInputElement>('[data-nui-id="7"] input')!;
+        const press = (code: number, key: string): void => {
+            const down = h.dispatchKey('keydown', code, key);
+            expect(down.defaultPrevented).toBe(true);
+            h.dispatchKey('keyup', code, key);
+        };
+        const selected = (): string | null => h.window.__tvemuNui.debug().keyboard.key;
+
+        expect(h.document.querySelector('[data-tvemu-keyboard]')).toBeNull();
+        h.applyFrame([['ime', 7, { panel: 'email', hidden: false }]]);
+        const panel = h.document.querySelector<HTMLElement>('[data-tvemu-keyboard]')!;
+        expect(panel.style.display).toBe('block');
+        expect(selected()).toBe('q');
+        expect(panel.querySelector('[data-tvemu-key=".com"]')).not.toBeNull();
+
+        h.events.length = 0;
+        press(13, 'Enter');
+        press(39, 'ArrowRight');
+        press(13, 'Enter');
+        expect(input.value).toBe('qw');
+        expect(h.events).toEqual([
+            { t: 'text', id: 7, value: 'q' },
+            { t: 'text', id: 7, value: 'qw' },
+        ]);
+
+        press(40, 'ArrowDown');
+        press(40, 'ArrowDown');
+        press(40, 'ArrowDown');
+        expect(selected()).toBe('Shift');
+        press(13, 'Enter');
+        press(38, 'ArrowUp');
+        expect(selected()).toBe('X');
+        press(13, 'Enter');
+        expect(input.value).toBe('qwX');
+        expect(selected()).toBe('x');
+
+        press(40, 'ArrowDown');
+        press(39, 'ArrowRight');
+        expect(selected()).toBe('#+=');
+        press(13, 'Enter');
+        press(38, 'ArrowUp');
+        press(38, 'ArrowUp');
+        press(38, 'ArrowUp');
+        press(38, 'ArrowUp');
+        expect(selected()).toBe('#');
+        press(13, 'Enter');
+        press(13, 'Enter');
+        press(13, 'Enter');
+        press(13, 'Enter');
+        expect(input.value).toBe('qwX###');
+
+        const keyEl = panel.querySelector<HTMLElement>('[data-tvemu-key="backspace"]')!;
+        keyEl.dispatchEvent(new h.window.MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        expect(input.value).toBe('qwX##');
+
+        h.events.length = 0;
+        press(10009, 'Back');
+        expect(panel.style.display).toBe('none');
+        expect(h.document.activeElement).toBe(input);
+        expect(h.events).toEqual([]);
+
+        h.dispatchKey('keydown', 40, 'ArrowDown');
+        h.dispatchKey('keyup', 40, 'ArrowDown');
+        expect(h.events).toEqual([
+            { t: 'key', state: 'down', key: 'ArrowDown', code: 40 },
+            { t: 'key', state: 'up', key: 'ArrowDown', code: 40 },
+        ]);
+
+        h.applyFrame([['ime', 7, { panel: 'email', hidden: false }]]);
+        expect(panel.style.display).toBe('block');
+        h.applyFrame([['ime', 0, {}]]);
+        expect(panel.style.display).toBe('none');
     });
 
     it('manages underlay video player lifecycle, time ticks, and HLS fallback', () => {

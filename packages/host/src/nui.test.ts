@@ -559,6 +559,11 @@ integrationSuite('real Chromium + fake NUI runtime integration', () => {
             expect(recorded).toContain('"t":"text"');
             expect(recorded).toContain('"value":"hello-tv"');
 
+            expect((await host.uiSnapshot()).keyboard).toBe('q');
+            await host.sendKey('Back');
+            await waitForCondition(async () => (await host.uiSnapshot()).keyboard === null);
+            expect(await host.runningApp()).not.toBeNull();
+
             expect(
                 await runCli(['key', 'Back'], {
                     stdout: (l) => cliOut.push(l),

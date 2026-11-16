@@ -3,6 +3,7 @@ import { chooseVideoBackend, createNativeVideo, resolveVideoPlaneHelper, type Na
 import {
     arrowKeysToward,
     buildTypeExpression,
+    HIDE_KEYBOARD_EXPRESSION,
     findFocusTargets,
     formatUiSnapshot,
     isFocusOn,
@@ -833,6 +834,7 @@ export function createHost(options: CreateHostOptions): TvemuHost {
     async function focusOn(text: string, maxSteps = 24): Promise<UiSnapshot> {
         const describe = (snapshot: UiSnapshot): string => (snapshot.focus ? `${snapshot.focus.rect.x},${snapshot.focus.rect.y},${snapshot.focus.text}` : '');
         const same = (a: UiRect, b: UiRect): boolean => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+        await evaluate<boolean>(HIDE_KEYBOARD_EXPRESSION);
         let snapshot = await uiSnapshot();
         if (findFocusTargets(snapshot, text).length === 0) {
             throw new Error(`Nothing on screen matches "${text}".\n${formatUiSnapshot(snapshot)}`);

@@ -16,6 +16,7 @@ const snapshot: UiSnapshot = {
     screen: { w: 1920, h: 1080 },
     focus: { kind: 'view', text: 'Play video', rect },
     editing: false,
+    keyboard: null,
     texts: [
         { text: 'Play video', rect, focused: true },
         { text: 'Settings', rect, focused: false },
@@ -34,6 +35,11 @@ describe('agent screen description', () => {
         expect(text).toContain('E-mail: "someone@example.com"');
         expect(text).toContain('cover.png');
         expect(text).toContain('clip.mp4');
+    });
+
+    it('reports the on-screen keyboard only while it is open', () => {
+        expect(formatUiSnapshot(snapshot)).not.toContain('keyboard:');
+        expect(formatUiSnapshot({ ...snapshot, keyboard: 'q' })).toContain('keyboard: open, highlighted key "q"');
     });
 
     it('matches text and focus without regard to case', () => {

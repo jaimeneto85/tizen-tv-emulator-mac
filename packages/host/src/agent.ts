@@ -43,6 +43,7 @@ export interface UiSnapshot {
     screen: { w: number; h: number };
     focus: { kind: string; text: string; rect: UiRect } | null;
     editing: boolean;
+    keyboard: string | null;
     texts: UiText[];
     fields: UiField[];
     images: UiImage[];
@@ -74,6 +75,19 @@ export const UI_SNAPSHOT_EXPRESSION = `(function () {
     }
     function inFocus(el) { return !!focusEl && (focusEl === el || focusEl.contains(el)); }
     if (editing && nui && typeof nui.debug === 'function') { editing = inFocus(active); }
+    var keyboard = null;
+    if (nui && typeof nui.debug === 'function') {
+        var keyboardState = nui.debug().keyboard;
+        if (keyboardState && keyboardState.open) { keyboard = keyboardState.key || ''; }
+    }
+    function inKeyboard(el) {
+        var node = el;
+        while (node && node.nodeType === 1) {
+            if (node.hasAttribute('data-tvemu-keyboard')) { return true; }
+            node = node.parentElement;
+        }
+        return false;
+    }
     var texts = [];
     var walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT, null, false);
     var current;
@@ -86,7 +100,7 @@ export const UI_SNAPSHOT_EXPRESSION = `(function () {
         var range = document.createRange();
         range.selectNodeContents(current);
         var box = range.getBoundingClientRect();
-        if (!onScreen(box) || !shown(parent)) { continue; }
+        if (!onScreen(box) || !shown(parent) || inKeyboard(parent)) { continue; }
         texts.push({ text: value, rect: rectOf(box), focused: inFocus(parent) });
     }
     var fields = [];
@@ -140,8 +154,14 @@ export const UI_SNAPSHOT_EXPRESSION = `(function () {
     }
     return JSON.stringify({
         url: location.href, title: document.title, screen: { w: W, h: H },
-        focus: focus, editing: editing, texts: texts, fields: fields, images: images, videos: videos
+        focus: focus, editing: editing, keyboard: keyboard, texts: texts, fields: fields, images: images, videos: videos
     });
+})()`;
+
+export const HIDE_KEYBOARD_EXPRESSION = `(function () {
+    var nui = window.__tvemuNui;
+    if (nui && typeof nui.hideKeyboard === 'function') { nui.hideKeyboard(); }
+    return true;
 })()`;
 
 export function buildTypeExpression(text: string, mode: 'replace' | 'append'): string {
@@ -159,6 +179,7 @@ export function buildTypeExpression(text: string, mode: 'replace' | 'append'): s
     setter.call(el, append ? el.value + text : text);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+    if (nui && typeof nui.hideKeyboard === 'function') { nui.hideKeyboard(); }
     return true;
 })(${JSON.stringify(text)}, ${mode === 'append' ? 'true' : 'false'})`;
 }
@@ -175,6 +196,9 @@ export function formatUiSnapshot(snapshot: UiSnapshot): string {
             ? `focus: ${snapshot.focus.kind} "${snapshot.focus.text}" at ${describeRect(snapshot.focus.rect)}${snapshot.editing ? ' (editing)' : ''}`
             : 'focus: none',
     );
+    if (snapshot.keyboard !== null && snapshot.keyboard !== undefined) {
+        lines.push(`keyboard: open, highlighted key "${snapshot.keyboard}" (arrows move, Enter presses, Back closes)`);
+    }
     for (const field of snapshot.fields) {
         lines.push(`${field.focused ? '>' : ' '} field[${field.type}] ${field.label}: "${field.value}"  (${describeRect(field.rect)})`);
     }

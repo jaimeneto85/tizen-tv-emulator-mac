@@ -24,16 +24,20 @@ export interface NuiDebugNode {
     url?: string;
 }
 
+import { createVirtualKeyboard, type VirtualKeyboardState } from './virtual-keyboard.js';
+
 export interface NuiDebugSnapshot {
     nodeCount: number;
     focusedId: number;
     imeId: number;
+    keyboard: VirtualKeyboardState;
     nodes: NuiDebugNode[];
 }
 
 export interface NuiRendererApi {
     apply: (json: string) => void;
     debug: () => NuiDebugSnapshot;
+    hideKeyboard: () => void;
     destroy: () => void;
     planeFrame: (id: number, jpegBase64: string) => void;
 }
@@ -188,6 +192,7 @@ function isPrintableKey(event: KeyboardEvent): boolean {
 export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
     const stageEl = doc.getElementById('tvemu-nui-stage') || doc.body;
     const underlayEl = doc.getElementById('tvemu-nui-underlay') || stageEl;
+    const keyboard = createVirtualKeyboard(doc, stageEl);
 
     const nodes = new Map<number, SceneNode>();
     const rootChildIds: number[] = [];
@@ -334,6 +339,7 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
         }
         if (imeId === id) {
             imeId = 0;
+            keyboard.hide();
         }
     }
 
@@ -719,6 +725,7 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
     function applyIme(id: number, opts?: NuiImeOptions): void {
         imeId = id;
         if (id === 0) {
+            keyboard.hide();
             blurFocusedField();
             return;
         }
@@ -739,6 +746,7 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
             node.inputEl.removeAttribute('inputmode');
         }
         node.inputEl.focus();
+        keyboard.show(node.inputEl, node.panel);
     }
 
     function applyOp(op: NuiOp): void {
@@ -1178,6 +1186,11 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
 
     const onKeyDown = (event: KeyboardEvent): void => {
         const code = event.keyCode;
+        if (keyboard.handleKey(code)) {
+            event.preventDefault();
+            suppressedKeyCodes.add(code);
+            return;
+        }
         const focusedInput = activeFieldInput();
         if (focusedInput && shouldEditFocusedInput(event, focusedInput)) {
             suppressedKeyCodes.add(code);
@@ -1278,6 +1291,7 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
             nodeCount: nodes.size,
             focusedId,
             imeId,
+            keyboard: keyboard.state(),
             nodes: list,
         };
     }
@@ -1285,6 +1299,7 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
     function destroy(): void {
         win.removeEventListener('keydown', onKeyDown, true);
         win.removeEventListener('keyup', onKeyUp, true);
+        keyboard.destroy();
         players.forEach((entry) => {
             stopPlayerTimer(entry);
             destroyPlayerHls(entry);
@@ -1305,5 +1320,5 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
         suppressedKeyCodes.clear();
     }
 
-    return { apply, debug, destroy, planeFrame };
+    return { apply, debug, destroy, planeFrame, hideKeyboard: keyboard.hide };
 }

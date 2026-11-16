@@ -132,7 +132,7 @@ Default device identity fields are generic non-Samsung placeholders shaped after
 | `tvemu inspect <file.tpk\|installed id>` | Run the .NET NUI API inspector against a `.tpk` or installed `.tpk` app and report supported/missing members. |
 | `tvemu status [--json]` | Whether the emulator is running, its profile and the running app. |
 | `tvemu key <name>... [--repeat <n>] [--delay <ms>] [--action press\|down\|up] [--ui]` | Send one or more remote keys in order. `--ui` waits for the screen to settle and prints it. |
-| `tvemu type <text> [--append]` | Type into the focused text field (opens it first when needed). |
+| `tvemu type <text> [--append]` | Type into the focused text field (opens it first when needed) and close the on-screen keyboard. |
 | `tvemu focus <text> [--enter]` | Walk the focus to the element showing that text using only arrow keys; fails when the D-pad cannot reach it. `--enter` then presses Enter. |
 | `tvemu ui [--json]` | Describe the screen as text: focus, labels, fields, images (loaded or not) and videos (position, state). |
 | `tvemu wait [--text <t>] [--gone <t>] [--focus <t>] [--exited] [--timeout <ms>]` | Block until the condition holds, then print the screen. Without a condition, waits for the screen to stop changing. Exits non-zero on timeout. |
@@ -192,6 +192,7 @@ Tools: `tv_start`, `tv_stop`, `tv_status`, `tv_launch`, `tv_key` (returns the se
 
 `tvemu` supports `.NET` Tizen TV packages (`.tpk` with `dotnet` / `dotnet-nui` / `dotnet-inhouse` application types) alongside `.wgt` web apps:
 
+- **On-screen keyboard:** When a NUI app activates the input method of a text field (`InputMethodContext.Activate()`), the emulator shows a TV-style on-screen keyboard. Arrows move the highlighted key, Enter presses it, `Done` or Back closes it, and the Mac keyboard and mouse keep working. While it is open the remote keys go to the keyboard, not to the app. `tvemu ui` reports the highlighted key.
 - **How it works:** When launching a `tpk` app, the host resolves `Tvemu.NuiHost.dll` (via `TVEMU_NUI_HOST` or `<repo>/dotnet/artifacts/nui-host/Tvemu.NuiHost.dll`), opens `/nui/` (`@tvemu/nui-renderer`) in Chromium, starts a localhost NDJSON TCP endpoint (`TVEMU_NUI_ENDPOINT` / `TVEMU_NUI_TOKEN`), and spawns the .NET runtime (`TVEMU_NUI_COMMAND`, defaulting to `dotnet`). Scene operations (`frame`) and media commands (`player`) are applied to a fixed `1920x1080` DOM stage with a `<video>` underlay, and keyboard/text/image/measure/player events flow back over the page bridge.
 - **Building the .NET runtime:** Requires .NET 9 (`dotnet build dotnet/Tvemu.sln -c Release`) when the `dotnet/` runtime sources are present. `tvemu doctor` reports both `dotnet` and whether `Tvemu.NuiHost.dll` is built.
 - **API Inspector:** Run `pnpm tvemu inspect <file.tpk|installed id>` (or let `tvemu run` run it automatically before launch) to inspect referenced `Tizen.*` members. Missing members are logged as warnings; launch still proceeds.
