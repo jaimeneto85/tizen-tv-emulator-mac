@@ -187,4 +187,33 @@ describe('remote-ui DOM controller', () => {
 
         controller.destroy();
     });
+
+    it('renders tpk kind badge for dotnet tpk apps', async () => {
+        const dom = await loadRemoteDom();
+        const controller = createRemoteUiController(dom.window.document, () => {});
+        const tpkApp: InstalledApp = {
+            ...SAMPLE_APP,
+            manifest: {
+                ...SAMPLE_APP.manifest,
+                appId: 'org.demo.tv.app',
+                packageId: 'org.demo.tv',
+                name: 'Demo NUI',
+                kind: 'tpk',
+                exec: 'Demo.Tv.dll',
+                appType: 'dotnet-nui',
+            },
+        };
+        controller.applyServerMessage({
+            type: 'state',
+            profile: SAMPLE_PROFILE,
+            apps: [tpkApp],
+            running: 'org.demo.tv.app',
+            registeredKeys: [],
+        });
+
+        const doc = dom.window.document;
+        expect(doc.querySelector('[data-role="running-app"]')?.textContent).toBe('Demo NUI (org.demo.tv.app) [tpk]');
+        expect(doc.querySelector('.app-kind')?.textContent).toBe('tpk');
+        controller.destroy();
+    });
 });

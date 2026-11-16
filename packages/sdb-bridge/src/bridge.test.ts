@@ -181,3 +181,66 @@ it('reports running state without launching and rejects unavailable debugging', 
     expect((await shell.execute('app_launcher -s TestPkg123.Test -w')).exitCode).toBe(1);
     expect(events).toEqual([]);
 });
+
+it('installs, launches, terminates, queries pkginfo, and uninstalls tpk packages', async () => {
+    const { home, files } = await fixture();
+    const events: string[] = [];
+    const baseHost = fakeHost(events);
+    const tpkInstalled = {
+        manifest: {
+            widgetId: 'org.demo.tpk',
+            appId: 'org.demo.tpk.app',
+            packageId: 'org.demo.tpk',
+            name: 'Demo TPK',
+            version: '1.0.0',
+            requiredVersion: '11.0',
+            contentSrc: 'Demo.dll',
+            icon: null,
+            privileges: [],
+            features: [],
+            contentSecurityPolicy: null,
+            accessOrigins: [],
+            settings: {},
+            profile: 'tv',
+            kind: 'tpk' as const,
+            exec: 'Demo.dll',
+            appType: 'dotnet-nui',
+            apiVersion: '11.0',
+        },
+        installDir: '/unused',
+        installedAt: '2026-01-01',
+    };
+    baseHost.listApps = async () => [tpkInstalled];
+    baseHost.installWgt = async (path) => {
+        events.push(`install:${path}`);
+        return tpkInstalled;
+    };
+    const shell = new DeviceShell(baseHost, files);
+    await writeFile(join(home, 'tmp/app.tpk'), 'tpk-fixture');
+
+    expect(await shell.execute('/usr/bin/pkgcmd -i -t tpk -p /tmp/app.tpk -q')).toEqual({
+        exitCode: 0,
+        output: '__return_cb req_id[1] pkg_type[tpk] pkgid[org.demo.tpk] key[end] val[ok]\n',
+    });
+    expect((await shell.execute('pkginfo --pkg org.demo.tpk')).output).toContain('Type: tpk\n');
+    expect((await shell.execute('pkgcmd -l')).output).toContain('pkg_type [tpk] pkgid [org.demo.tpk]');
+    expect((await shell.execute('launch_app org.demo.tpk.app')).output).toContain('successfully launched');
+    expect((await shell.execute('app_launcher -t org.demo.tpk.app')).output).toContain('Terminate appId: org.demo.tpk.app');
+    expect(await shell.execute('/usr/bin/pkgcmd -q -u -n org.demo.tpk')).toEqual({
+        exitCode: 0,
+        output: '__return_cb req_id[1] pkg_type[tpk] pkgid[org.demo.tpk] key[end] val[ok]\n',
+    });
+    expect(await appCommand('install:tpk:/tmp/app.tpk:null:null', baseHost, files)).toBe(
+        'appcmd_returnstr:__return_cb pkgid[org.demo.tpk] key[end] val[ok]\nappcmd_exitcode:0\n',
+    );
+    expect(await appCommand('packageinfo:org.demo.tpk', baseHost, files)).toBe(
+        'appcmd_returnstr:org.demo.tpk.app:tpk:1:0\nappcmd_exitcode:0\n',
+    );
+    expect(events).toEqual([
+        `install:${home}/tmp/app.tpk`,
+        'launch:org.demo.tpk.app',
+        'terminate:org.demo.tpk.app',
+        'uninstall:org.demo.tpk',
+        `install:${home}/tmp/app.tpk`,
+    ]);
+});

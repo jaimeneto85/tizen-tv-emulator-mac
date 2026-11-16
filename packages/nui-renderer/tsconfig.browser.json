@@ -1,0 +1,10 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "noEmit": true,
+        "rootDir": "src",
+        "lib": ["ES2017", "DOM"]
+    },
+    "include": ["src/browser"],
+    "exclude": ["src/**/*.test.ts"]
+}

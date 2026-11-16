@@ -39,6 +39,7 @@ const NUMBER_PROFILE_FIELDS = new Set<keyof DeviceProfile>([
     'width',
     'height',
     'cpuThrottle',
+    'nuiDpi',
 ]);
 
 function assignProfileField(

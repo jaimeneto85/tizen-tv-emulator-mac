@@ -99,7 +99,12 @@ export class DeviceShell {
             const id = option('--pkg');
             const app = (await this.host.listApps()).find((app) => app.manifest.packageId === id || app.manifest.appId === id);
             if (!app) return '';
-            const fields = { Label: app.manifest.name, mainappid: app.manifest.appId, Type: 'wgt', Removable: '1' };
+            const fields = {
+                Label: app.manifest.name,
+                mainappid: app.manifest.appId,
+                Type: app.manifest.kind ?? 'wgt',
+                Removable: '1',
+            };
             return Object.entries(fields).filter(([key]) => !command.includes('|') || command.toLowerCase().includes(key.toLowerCase()))
                 .map(([key, value]) => `${key}: ${value}\n`).join('');
         }
@@ -113,15 +118,17 @@ export class DeviceShell {
             }
             if (args.includes('-i')) {
                 const app = await this.host.installWgt(await this.files.path(option('-p')));
+                const pkgType = app.manifest.kind ?? (args.includes('-t') ? option('-t') : 'wgt');
                 return name === 'wascmd' ? `app_id[${app.manifest.appId}] install start\napp_id[${app.manifest.appId}] install completed\n`
-                    : `__return_cb req_id[1] pkg_type[wgt] pkgid[${app.manifest.packageId}] key[end] val[ok]\n`;
+                    : `__return_cb req_id[1] pkg_type[${pkgType}] pkgid[${app.manifest.packageId}] key[end] val[ok]\n`;
             }
             if (args.includes('-u')) {
                 const id = name === 'wascmd' ? option('-u') : option('-n');
                 const app = (await this.host.listApps()).find((app) => app.manifest.appId === id || app.manifest.packageId === id);
+                const pkgType = app?.manifest.kind ?? 'wgt';
                 await this.host.uninstall(app?.manifest.packageId ?? id);
                 return name === 'wascmd' ? `app_id[${id}] uninstall start\napp_id[${id}] uninstall completed\n`
-                    : `__return_cb req_id[1] pkg_type[wgt] pkgid[${id}] key[end] val[ok]\n`;
+                    : `__return_cb req_id[1] pkg_type[${pkgType}] pkgid[${id}] key[end] val[ok]\n`;
             }
             if (args.includes('-l')) {
                 const apps = await this.host.listApps();
@@ -133,8 +140,8 @@ export class DeviceShell {
                     + `apps count: ${apps.length}\n`;
                 if (name === 'app_launcher') return 'Application List for user 5001\n Name \t AppID \n'
                     + apps.map((app) => `'${app.manifest.name}' '${app.manifest.appId}'\n`).join('');
-                return apps.map((app) => `pkg_type [wgt] pkgid [${app.manifest.packageId}] name [${app.manifest.name}]`
-                    + ` version [${app.manifest.version}] storage [internal]\n`).join('');
+                return apps.map((app) => `pkg_type [${app.manifest.kind ?? 'wgt'}] pkgid [${app.manifest.packageId}]`
+                    + ` name [${app.manifest.name}] version [${app.manifest.version}] storage [internal]\n`).join('');
             }
             if (name === 'pkgcmd' && args.includes('-C')) {
                 const id = option('-n');
@@ -148,7 +155,9 @@ export class DeviceShell {
                 return name === 'wascmd' ? `terminate app ${id}\napp_id[${id}] terminated\n`
                     : name === 'pkgcmd' ? `Pkgid: ${id} is Running\n` : ` Terminate appId: ${id} (1)\n`;
             }
-            const id = name === 'launch_app' ? args[0] : option('--start', '--s', '-s', '-r');
+            const id = name === 'launch_app'
+                ? (args.includes('-s') || args.includes('--s') || args.includes('--start') ? option('--start', '--s', '-s') : args[0])
+                : option('--start', '--s', '-s', '-r');
             if (!id) throw new Error('Missing application ID');
             await this.host.launch(id, { debug: args.includes('--web-debug') || args.includes('--debug') });
             return name === 'wascmd' ? `app_id[${id}] launch start\napp_id[${id}] launched\n`

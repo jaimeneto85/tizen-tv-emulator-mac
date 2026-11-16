@@ -307,6 +307,19 @@ body {
     white-space: nowrap;
 }
 
+.app-kind {
+    display: inline-block;
+    margin-top: 3px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: #1f3a5f;
+    color: #9bc4ff;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
 .action-button {
     appearance: none;
     border: 1px solid #3c69ad;

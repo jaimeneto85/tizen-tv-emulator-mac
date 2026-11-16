@@ -125,17 +125,34 @@ Default device identity fields are generic non-Samsung placeholders shaped after
 | Command | Description |
 |---|---|
 | `tvemu start [--profile <name>] [--scale <n>] [--headless] [--no-sdb] [--no-remote] [--strict-engine] [--set <key=value>]` | Start the emulator host in the foreground and open the remote UI window (unless `--no-remote` or `--headless`). |
-| `tvemu install <file.wgt>` | Install a `.wgt` package into the app store (works offline or against a running instance). |
-| `tvemu run <appId\|packageId\|file.wgt> [--profile <name>] [--scale <n>] [--headless] [--no-sdb] [--no-remote] [--strict-engine] [--set <key=value>]` | Start the emulator if not already running, install the `.wgt` if given a file, and launch the app. |
+| `tvemu install <file.wgt\|file.tpk>` | Install a `.wgt` or `.NET .tpk` package into the app store (detected by content; works offline or against a running instance). |
+| `tvemu run <appId\|packageId\|file.wgt\|file.tpk> [--profile <name>] [--scale <n>] [--headless] [--no-sdb] [--no-remote] [--strict-engine] [--set <key=value>]` | Start the emulator if not already running, install the package if given a file, and launch the app. |
 | `tvemu uninstall <packageId>` | Uninstall an app by package ID. |
-| `tvemu list` | List installed apps. |
+| `tvemu list` | List installed apps with package kind (`wgt` or `tpk`). |
+| `tvemu inspect <file.tpk\|installed id>` | Run the .NET NUI API inspector against a `.tpk` or installed `.tpk` app and report supported/missing members. |
 | `tvemu profiles` | List device profiles with exact vs approximate engine status. |
-| `tvemu doctor` | Check Node.js, architecture, Rosetta 2, `<home>`, port `26101`, Samsung `sdb`, and every profile's engine resolution. |
+| `tvemu doctor` | Check Node.js, architecture, Rosetta 2, `<home>`, port `26101`, Samsung `sdb`, `dotnet`, NUI runtime build status, and every profile's engine resolution. |
 | `tvemu engine list` | List supported Chromium milestones and availability. |
 | `tvemu engine install <milestone>` | Download and extract the pinned Chromium snapshot for `<milestone>`. |
 | `tvemu key <name> [--action press\|down\|up]` | Send a remote key event to the running emulator. |
 | `tvemu screenshot <out.png>` | Capture a PNG screenshot of the running app page. |
 | `tvemu stop` | Stop the running emulator instance cleanly. |
+
+## .NET NUI Apps (`.tpk`)
+
+`tvemu` supports `.NET` Tizen TV packages (`.tpk` with `dotnet` / `dotnet-nui` / `dotnet-inhouse` application types) alongside `.wgt` web apps:
+
+- **How it works:** When launching a `tpk` app, the host resolves `Tvemu.NuiHost.dll` (via `TVEMU_NUI_HOST` or `<repo>/dotnet/artifacts/nui-host/Tvemu.NuiHost.dll`), opens `/nui/` (`@tvemu/nui-renderer`) in Chromium, starts a localhost NDJSON TCP endpoint (`TVEMU_NUI_ENDPOINT` / `TVEMU_NUI_TOKEN`), and spawns the .NET runtime (`TVEMU_NUI_COMMAND`, defaulting to `dotnet`). Scene operations (`frame`) and media commands (`player`) are applied to a fixed `1920x1080` DOM stage with a `<video>` underlay, and keyboard/text/image/measure/player events flow back over the page bridge.
+- **Building the .NET runtime:** Requires .NET 9 (`dotnet build dotnet/Tvemu.sln -c Release`) when the `dotnet/` runtime sources are present. `tvemu doctor` reports both `dotnet` and whether `Tvemu.NuiHost.dll` is built.
+- **API Inspector:** Run `pnpm tvemu inspect <file.tpk|installed id>` (or let `tvemu run` run it automatically before launch) to inspect referenced `Tizen.*` members. Missing members are logged as warnings; launch still proceeds.
+- **Limitations:**
+  - **No Tizen OS:** System daemons, Linux services, and hardware platform APIs outside the shims are not present.
+  - **API subset:** the runtime re-implements part of `Tizen.NUI`, `Tizen.Applications`, `Tizen.Multimedia`, `Tizen.System` and `Tizen.Log` (see `dotnet/coverage.md`). `View.Layout` layouts, `ScrollableBase` and `Tizen.NUI.Components` are not implemented yet; `tvemu inspect` lists every member an app needs that is missing.
+  - **Unverified against hardware:** font DPI (96 by default, `nuiDpi` in the profile), native key codes and video playback were not compared with a physical TV.
+  - **Native C/C++ `.tpk` unsupported:** `capp` / `c++app` packages require the Tizen OS and are rejected at install time.
+  - **DOM approximation of DALi:** `@tvemu/nui-renderer` approximates DALi views, text, borders, images, and fields using HTML/CSS inside Chromium; subtle visual differences can occur.
+  - **Fonts differ:** TV system fonts are not bundled; Chromium uses available macOS/system fonts unless the app loads its own.
+  - **DRM absent:** Hardware-backed TV DRM pipelines are not implemented; video playback uses HTML5 `<video>` (and `window.Hls` if present for non-native HLS).
 
 ## Using with Samsung `sdb` and `tizen` Tools
 
@@ -152,8 +169,8 @@ If port `26101` is already occupied or `@tvemu/sdb-bridge` fails to load, `tvemu
 
 ## Limitations
 
-- **No Tizen OS:** Only the web runtime inside Chromium is emulated; Tizen system daemons, kernel modules, and Linux services are not present.
-- **No Native or .NET Apps:** Only `.wgt` web packages are supported; `.tpk` native and C#/.NET apps cannot run.
+- **No Tizen OS:** Only the web runtime inside Chromium and the .NET NUI bridge are emulated; Tizen system daemons, kernel modules, and Linux services are not present.
+- **No Native C/C++ `.tpk` Apps:** Native (`capp`/`c++app`) `.tpk` packages cannot run; only `.wgt` web packages and `.NET` `.tpk` packages are supported.
 - **DRM & Hardware Media / AVPlay Limits:** Hardware-backed TV DRM pipelines and Samsung proprietary AVPlay hardware decoders are not present; media playback is limited to codecs supported by the selected Chromium build.
 - **API Coverage:** Only the subset of `tizen.*` and `webapis.*` APIs implemented by `@tvemu/tizen-api` is available.
 - **Approximate Engine Fidelity:** Running a profile on an approximate Playwright Chromium build instead of its exact milestone does not reproduce older CSS/JS engine quirks (such as Chromium 69 layout behavior).

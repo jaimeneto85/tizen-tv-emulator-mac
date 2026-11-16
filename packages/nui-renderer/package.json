@@ -1,0 +1,30 @@
+{
+    "name": "@tvemu/nui-renderer",
+    "version": "0.1.0",
+    "license": "MIT",
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.json && node scripts/build-browser.mjs",
+        "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.browser.json --noEmit",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "@tvemu/protocol": "workspace:*"
+    },
+    "devDependencies": {
+        "@types/jsdom": "^21.1.7",
+        "@types/node": "^22.10.0",
+        "esbuild": "^0.21.5",
+        "jsdom": "^25.0.1",
+        "typescript": "^5.7.0",
+        "vitest": "^2.1.0"
+    }
+}

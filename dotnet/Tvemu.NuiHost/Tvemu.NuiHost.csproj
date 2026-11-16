@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <OutputPath>../artifacts/nui-host/</OutputPath><AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Tvemu.Runtime/Tvemu.Runtime.csproj" />
+    <ProjectReference Include="../Tvemu.Metadata/Tvemu.Metadata.csproj" />
+    <ProjectReference Include="../Tizen.NUI/Tizen.NUI.csproj" />
+    <ProjectReference Include="../Tizen.Applications.Common/Tizen.Applications.Common.csproj" />
+    <ProjectReference Include="../Tizen.Applications.Preference/Tizen.Applications.Preference.csproj" />
+    <ProjectReference Include="../Tizen.Log/Tizen.Log.csproj" />
+    <ProjectReference Include="../Tizen.Multimedia/Tizen.Multimedia.csproj" />
+    <ProjectReference Include="../Tizen.Multimedia.MediaPlayer/Tizen.Multimedia.MediaPlayer.csproj" />
+    <ProjectReference Include="../Tizen.System.MediaKey/Tizen.System.MediaKey.csproj" />
+    <ProjectReference Include="../Tizen.System.Information/Tizen.System.Information.csproj" />
+  </ItemGroup>
+</Project>

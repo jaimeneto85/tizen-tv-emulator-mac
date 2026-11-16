@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../Tvemu.Metadata/Tvemu.Metadata.csproj" /><ProjectReference Include="../Tvemu.NuiHost/Tvemu.NuiHost.csproj" /><ProjectReference Include="../samples/HelloTv/HelloTv.csproj" /></ItemGroup>
+</Project>

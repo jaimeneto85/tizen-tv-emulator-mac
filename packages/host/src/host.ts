@@ -2,9 +2,11 @@ import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createChromiumEngine, resolveEngine, type ResolvedEngine } from '@tvemu/engine';
+import { nuiRendererAssetsDir } from '@tvemu/nui-renderer';
 import {
     BRIDGE_MANIFEST_GLOBAL,
     BRIDGE_PROFILE_GLOBAL,
+    REMOTE_KEYS,
     SDB_DEFAULT_PORT,
     findRemoteKey,
     type BridgeRequest,
@@ -15,12 +17,19 @@ import {
     type InstalledApp,
     type KeyAction,
     type LaunchOptions,
+    type NuiHostMessage,
     type RemoteUiClientMessage,
     type RemoteUiServerMessage,
 } from '@tvemu/protocol';
 import { remoteUiAssetsDir } from '@tvemu/remote-ui';
 import { createAppStore } from '@tvemu/wgt';
 import { createHostHttpServer, type ControlResponse, type HostHttpServer } from './http-server.js';
+import {
+    checkNuiRuntimeAvailable,
+    createNuiSession,
+    inspectDotnetAssembly,
+    type NuiSession,
+} from './nui-runtime.js';
 import { removeRunState, writeRunState } from './run-file.js';
 
 export interface SdbBridgeInstance {
@@ -54,6 +63,7 @@ export interface CreateHostOptions {
     log?: (line: string) => void;
     controlToken?: string;
     playwrightCacheDir?: string;
+    nuiAssetsDir?: string;
     onStopRequested?: () => void;
     createEngine?: (options: EngineFactoryOptions) => Promise<Engine> | Engine;
     loadTizenApiScript?: () => Promise<string | null>;
@@ -89,6 +99,9 @@ function buildBootstrapScript(profile: DeviceProfile, manifest: InstalledApp['ma
 }
 
 function resolveAppUrl(app: InstalledApp, port: number): string {
+    if (app.manifest.kind === 'tpk') {
+        return `http://127.0.0.1:${port}/nui/`;
+    }
     const src = app.manifest.contentSrc;
     if (/^https?:\/\//i.test(src)) {
         return src;
@@ -158,10 +171,21 @@ export function createHost(options: CreateHostOptions): TvemuHost {
     let activeEngine: Engine | null = null;
     let activeEngineAllowCrossOrigin = false;
     let activeEngineManifestJson: string | null = null;
+    let activeEngineIsTpk = false;
     let activeEngineWarning: string | null = null;
+    let activeNuiSession: NuiSession | null = null;
     let shuttingDownEngine = false;
     let sdbBridge: SdbBridgeInstance | null = null;
     let httpServer: HostHttpServer | null = null;
+
+    async function stopActiveNuiSession(): Promise<void> {
+        if (!activeNuiSession) {
+            return;
+        }
+        const session = activeNuiSession;
+        activeNuiSession = null;
+        await session.terminate().catch(() => {});
+    }
 
     const repeatTimers = new Map<string, KeyRepeatEntry>();
 
@@ -275,6 +299,15 @@ export function createHost(options: CreateHostOptions): TvemuHost {
             return;
         }
 
+        if (route === 'nui.event') {
+            const payload = request.args[0] as NuiHostMessage | undefined;
+            if (payload && activeNuiSession) {
+                activeNuiSession.send(payload);
+            }
+            await reply({ id: request.id, ok: true });
+            return;
+        }
+
         if (route === 'console.log') {
             const level = normalizeLogLevel(request.args[0]);
             const text = request.args[1] !== undefined ? String(request.args[1]) : '';
@@ -297,11 +330,13 @@ export function createHost(options: CreateHostOptions): TvemuHost {
     async function ensureEngineStarted(app: InstalledApp): Promise<Engine> {
         const allowCrossOrigin = app.manifest.accessOrigins.includes('*');
         const manifestJson = JSON.stringify(app.manifest);
+        const isTpk = app.manifest.kind === 'tpk';
 
         if (activeEngine) {
             if (
                 activeEngineAllowCrossOrigin === allowCrossOrigin &&
-                activeEngineManifestJson === manifestJson
+                activeEngineManifestJson === manifestJson &&
+                activeEngineIsTpk === isTpk
             ) {
                 return activeEngine;
             }
@@ -312,6 +347,7 @@ export function createHost(options: CreateHostOptions): TvemuHost {
                 shuttingDownEngine = false;
                 activeEngine = null;
                 activeEngineManifestJson = null;
+                activeEngineIsTpk = false;
             }
         }
 
@@ -330,6 +366,7 @@ export function createHost(options: CreateHostOptions): TvemuHost {
             if (activeEngine === engine) {
                 activeEngine = null;
                 activeEngineManifestJson = null;
+                activeEngineIsTpk = false;
             }
             if (shuttingDownEngine) {
                 return;
@@ -337,14 +374,20 @@ export function createHost(options: CreateHostOptions): TvemuHost {
             clearAllKeyRepeats();
             running = null;
             registeredKeys = [];
+            void stopActiveNuiSession();
             emitLog(`[host] engine exited: ${reason}`);
             void broadcastState();
         });
 
         const bootstrap = buildBootstrapScript(options.profile, app.manifest);
-        const loadTizenApi = options.loadTizenApiScript ?? (() => defaultLoadTizenApiScript(emitLog));
-        const tizenApiScript = await loadTizenApi();
-        const injectedScripts = tizenApiScript ? [bootstrap, tizenApiScript] : [bootstrap];
+        let injectedScripts: string[] = [bootstrap];
+        if (!isTpk) {
+            const loadTizenApi = options.loadTizenApiScript ?? (() => defaultLoadTizenApiScript(emitLog));
+            const tizenApiScript = await loadTizenApi();
+            if (tizenApiScript) {
+                injectedScripts = [bootstrap, tizenApiScript];
+            }
+        }
         const userDataDir = path.join(options.home, 'profiles', options.profile.name);
 
         await engine.start({
@@ -359,6 +402,7 @@ export function createHost(options: CreateHostOptions): TvemuHost {
         activeEngine = engine;
         activeEngineAllowCrossOrigin = allowCrossOrigin;
         activeEngineManifestJson = manifestJson;
+        activeEngineIsTpk = isTpk;
         return engine;
     }
 
@@ -380,6 +424,146 @@ export function createHost(options: CreateHostOptions): TvemuHost {
         await broadcastState();
     }
 
+    async function endRunningApp(): Promise<void> {
+        clearAllKeyRepeats();
+        running = null;
+        registeredKeys = [];
+        if (activeEngine && httpServer && httpServer.port() > 0) {
+            const idleUrl = `http://127.0.0.1:${httpServer.port()}/idle`;
+            await activeEngine.navigate(idleUrl).catch(() => {});
+        }
+        await broadcastState();
+    }
+
+    async function launchTpkApp(app: InstalledApp): Promise<void> {
+        if (!httpServer || httpServer.port() <= 0) {
+            throw new Error('Host is not started');
+        }
+        const runtime = await checkNuiRuntimeAvailable(options.env);
+        const contentDir = appStore.contentDir(app);
+        const execName = app.manifest.exec ?? app.manifest.contentSrc;
+        const assemblyPath = path.isAbsolute(execName) ? execName : path.join(contentDir, 'bin', execName);
+
+        try {
+            const report = await inspectDotnetAssembly({
+                command: runtime.command,
+                hostDllPath: runtime.hostDllPath,
+                assemblyPath,
+                env: options.env,
+            });
+            for (const member of report.missing) {
+                const warnText = `Missing NUI API: ${member}`;
+                emitLog(`[host] WARNING: ${warnText}`);
+                httpServer.broadcast({ type: 'log', level: 'warn', text: warnText });
+            }
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            const warnText = `NUI inspect skipped (${detail})`;
+            emitLog(`[host] WARNING: ${warnText}`);
+            httpServer.broadcast({ type: 'log', level: 'warn', text: warnText });
+        }
+
+        const engine = await ensureEngineStarted(app);
+        clearAllKeyRepeats();
+        registeredKeys = REMOTE_KEYS.map((item) => item.name);
+        running = app;
+        await broadcastState();
+
+        let pageLoaded = false;
+        const pendingPayloads: string[] = [];
+        let applyChain = Promise.resolve();
+
+        const scheduleApply = (payloadJson: string): void => {
+            if (!pageLoaded) {
+                pendingPayloads.push(payloadJson);
+                return;
+            }
+            applyChain = applyChain
+                .then(async () => {
+                    if (activeEngine !== engine || running?.manifest.appId !== app.manifest.appId) {
+                        return;
+                    }
+                    await engine.evaluate<void>(
+                        `window.__tvemuNui && window.__tvemuNui.apply(${JSON.stringify(payloadJson)});`,
+                    );
+                })
+                .catch((error) => {
+                    const detail = error instanceof Error ? error.message : String(error);
+                    emitLog(`[nui] apply error: ${detail}`);
+                });
+        };
+
+        const targetUrl = resolveAppUrl(app, httpServer.port());
+        try {
+            await engine.navigate(targetUrl);
+        } catch (error) {
+            running = null;
+            registeredKeys = [];
+            await broadcastState();
+            throw error;
+        }
+
+        pageLoaded = true;
+        while (pendingPayloads.length > 0) {
+            const next = pendingPayloads.shift();
+            if (next) {
+                scheduleApply(next);
+            }
+        }
+
+        const dataDir = path.join(options.home, 'appdata', app.manifest.packageId);
+        let sessionRef: NuiSession | null = null;
+        try {
+            sessionRef = await createNuiSession({
+                app,
+                contentDir,
+                dataDir,
+                profile: options.profile,
+                command: runtime.command,
+                hostDllPath: runtime.hostDllPath,
+                env: options.env,
+                onReady: () => {
+                    emitLog('[nui] app ready');
+                },
+                onFrame: scheduleApply,
+                onPlayer: scheduleApply,
+                onLog: (level, text) => {
+                    emitLog(text);
+                    httpServer?.broadcast({ type: 'log', level, text });
+                },
+                onMissing: (member) => {
+                    const warnText = `Missing NUI API: ${member}`;
+                    emitLog(`[host] WARNING: ${warnText}`);
+                    httpServer?.broadcast({ type: 'log', level: 'warn', text: warnText });
+                },
+                onEnded: (info) => {
+                    if (activeNuiSession !== sessionRef) {
+                        return;
+                    }
+                    activeNuiSession = null;
+                    if (info.code !== 0 || info.reason === 'crash') {
+                        const errText =
+                            `NUI runtime exited (${info.reason}, code=${info.code ?? 'unknown'})` +
+                            `${info.error ? `: ${info.error}` : ''}`;
+                        emitLog(`[host] ERROR: ${errText}`);
+                        httpServer?.broadcast({ type: 'log', level: 'error', text: errText });
+                        for (const line of info.stderrTail) {
+                            emitLog(`[nui:stderr] ${line}`);
+                            httpServer?.broadcast({ type: 'log', level: 'error', text: `[stderr] ${line}` });
+                        }
+                    }
+                    if (!stopping) {
+                        void endRunningApp();
+                    }
+                },
+            });
+            activeNuiSession = sessionRef;
+        } catch (error) {
+            await endRunningApp();
+            throw error;
+        }
+    }
+
     async function launch(appId: string, _launchOptions?: LaunchOptions): Promise<void> {
         if (!httpServer || httpServer.port() <= 0) {
             throw new Error('Host is not started');
@@ -387,6 +571,13 @@ export function createHost(options: CreateHostOptions): TvemuHost {
         const app = (await appStore.findByAppId(appId)) ?? (await appStore.findByPackageId(appId));
         if (!app) {
             throw new Error(`App not found: ${appId}`);
+        }
+
+        await stopActiveNuiSession();
+
+        if (app.manifest.kind === 'tpk') {
+            await launchTpkApp(app);
+            return;
         }
 
         const engine = await ensureEngineStarted(app);
@@ -410,14 +601,8 @@ export function createHost(options: CreateHostOptions): TvemuHost {
         if (running && running.manifest.appId !== appId && running.manifest.packageId !== appId) {
             throw new Error(`App is not running: ${appId}`);
         }
-        clearAllKeyRepeats();
-        running = null;
-        registeredKeys = [];
-        if (activeEngine && httpServer && httpServer.port() > 0) {
-            const idleUrl = `http://127.0.0.1:${httpServer.port()}/idle`;
-            await activeEngine.navigate(idleUrl).catch(() => {});
-        }
-        await broadcastState();
+        await stopActiveNuiSession();
+        await endRunningApp();
     }
 
     async function runningApp(): Promise<InstalledApp | null> {
@@ -624,6 +809,7 @@ export function createHost(options: CreateHostOptions): TvemuHost {
         const server = createHostHttpServer({
             appStore,
             remoteAssetsDir: remoteUiAssetsDir(),
+            nuiAssetsDir: options.nuiAssetsDir ?? nuiRendererAssetsDir(),
             profile: options.profile,
             controlToken,
             port: options.uiPort,
@@ -683,6 +869,8 @@ export function createHost(options: CreateHostOptions): TvemuHost {
         clearAllKeyRepeats();
         running = null;
         registeredKeys = [];
+
+        await stopActiveNuiSession();
 
         if (activeEngine) {
             const engine = activeEngine;

@@ -239,4 +239,100 @@ describe('WGT archives and store', () => {
         await writeFile(path, 'not a zip');
         await expect(readWgtManifest(path)).rejects.toMatchObject({ code: 'NOT_A_WGT' });
     });
+
+    it('installs dotnet tpk packages by content and propagates native TpkError', async () => {
+        const home = await temporaryDirectory();
+        const pkgDir = await temporaryDirectory();
+        const tpkFile = join(pkgDir, 'sample.pkg');
+        await writeFile(tpkFile, zipSync({
+            'tizen-manifest.xml': strToU8('<manifest package="org.demo.tv"/>'),
+            'bin/Demo.Tv.dll': strToU8('dll-bytes'),
+        }));
+
+        const sampleManifest = {
+            packageId: 'org.demo.tv',
+            version: '1.2.0',
+            apiVersion: '11.0',
+            profiles: ['tv'],
+            label: 'Demo TV',
+            privileges: ['http://tizen.org/privilege/internet'],
+            apps: [{
+                appId: 'org.demo.tv.app',
+                exec: 'Demo.Tv.dll',
+                type: 'dotnet-nui',
+                kind: 'ui' as const,
+                label: 'Demo TV',
+                labels: { default: 'Demo TV' },
+                icon: 'res/icon.png',
+                metadata: {},
+                nodisplay: false,
+                launchMode: null,
+            }],
+            signed: { author: false, distributor: false },
+        };
+
+        const fakeTpk = {
+            async isTpk(filePath: string) {
+                return filePath === tpkFile;
+            },
+            async readTpkManifest() {
+                return sampleManifest;
+            },
+            async extractTpk(_tpkPath: string, destDir: string) {
+                await mkdir(join(destDir, 'bin'), { recursive: true });
+                await writeFile(join(destDir, 'bin', 'Demo.Tv.dll'), 'dll-bytes');
+                return sampleManifest;
+            },
+            mainUiApp(manifest: typeof sampleManifest) {
+                return manifest.apps[0]!;
+            },
+        };
+
+        const store = createAppStore(home, { loadTpk: async () => fakeTpk });
+        const installed = await store.install(tpkFile);
+        expect(installed.manifest.kind).toBe('tpk');
+        expect(installed.manifest.exec).toBe('Demo.Tv.dll');
+        expect(installed.manifest.appType).toBe('dotnet-nui');
+        expect(installed.manifest.apiVersion).toBe('11.0');
+        expect(installed.manifest.packageId).toBe('org.demo.tv');
+        expect(installed.manifest.appId).toBe('org.demo.tv.app');
+        expect(await readFile(join(store.contentDir(installed), 'bin', 'Demo.Tv.dll'), 'utf8')).toBe('dll-bytes');
+
+        const reloaded = await createAppStore(home).findByPackageId('org.demo.tv');
+        expect(reloaded?.manifest.kind).toBe('tpk');
+        expect(reloaded?.manifest.exec).toBe('Demo.Tv.dll');
+
+        const nativeTpk = {
+            ...fakeTpk,
+            mainUiApp() {
+                const err = new Error('Native capp packages require the Tizen OS and are not supported');
+                (err as Error & { code: string }).code = 'NOT_DOTNET';
+                throw err;
+            },
+        };
+        const nativeStore = createAppStore(home, { loadTpk: async () => nativeTpk });
+        await expect(nativeStore.install(tpkFile)).rejects.toMatchObject({
+            code: 'NOT_DOTNET',
+            message: 'Native capp packages require the Tizen OS and are not supported',
+        });
+
+        const realTpkZip = join(pkgDir, 'real-layout.tpk');
+        const tizenManifest = `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns="http://tizen.org/ns/packages" package="org.real.tpk" version="2.0.0" api-version="11.0">
+    <profile name="tv"/>
+    <ui-application appid="org.real.tpk.main" exec="RealApp.dll" type="dotnet-nui" nodisplay="false">
+        <label>Real TPK</label>
+    </ui-application>
+</manifest>`;
+        await writeFile(realTpkZip, zipSync({
+            'tizen-manifest.xml': strToU8(tizenManifest),
+            'bin/RealApp.dll': strToU8('fake-pe'),
+        }));
+        const realStore = createAppStore(home);
+        const realInstalled = await realStore.install(realTpkZip);
+        expect(realInstalled.manifest.kind).toBe('tpk');
+        expect(realInstalled.manifest.packageId).toBe('org.real.tpk');
+        expect(realInstalled.manifest.appId).toBe('org.real.tpk.main');
+        expect(realInstalled.manifest.exec).toBe('RealApp.dll');
+    });
 });

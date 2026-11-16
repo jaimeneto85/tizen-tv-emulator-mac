@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
-import { access, stat, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer as createNetServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,8 +21,15 @@ import {
     type InstalledApp,
     type KeyAction,
 } from '@tvemu/protocol';
-import { createAppStore } from '@tvemu/wgt';
+import { createAppStore, loadTpkModule } from '@tvemu/wgt';
 import { createHost, type TvemuHost } from './host.js';
+import {
+    checkNuiRuntimeAvailable,
+    inspectDotnetAssembly,
+    probeDotnetVersion,
+    resolveNuiHostDllPath,
+    type NuiInspectReport,
+} from './nui-runtime.js';
 import { loadDeviceProfile, parseProfileSetArgs, selectDeviceProfile } from './profile.js';
 import { readRunState, type RunState } from './run-file.js';
 
@@ -53,11 +60,12 @@ function usageText(): string {
         'Commands:',
         '  start [--profile <name>] [--scale <n>] [--headless] [--no-sdb] [--no-remote] ' +
         '[--strict-engine] [--set <key=value>]',
-        '  install <file.wgt>',
-        '  run <appId|packageId|file.wgt> [--profile <name>] [--scale <n>] [--headless] ' +
+        '  install <file.wgt|file.tpk>',
+        '  run <appId|packageId|file.wgt|file.tpk> [--profile <name>] [--scale <n>] [--headless] ' +
         '[--no-sdb] [--no-remote] [--strict-engine] [--set <key=value>]',
         '  uninstall <packageId>',
         '  list',
+        '  inspect <file.tpk|installed id>',
         '  profiles',
         '  doctor',
         '  engine list | install <milestone>',
@@ -180,12 +188,52 @@ function formatAppList(apps: InstalledApp[]): string {
         return 'No apps installed.';
     }
     return apps
-        .map((app) => `${app.manifest.appId}\t${app.manifest.packageId}\t${app.manifest.name}\tv${app.manifest.version}`)
+        .map((app) => {
+            const kind = app.manifest.kind ?? 'wgt';
+            return `${kind}\t${app.manifest.appId}\t${app.manifest.packageId}\t${app.manifest.name}\tv${app.manifest.version}`;
+        })
         .join('\n');
 }
 
-function isWgtTarget(target: string): boolean {
-    return target.toLowerCase().endsWith('.wgt');
+async function isRegularFile(targetPath: string): Promise<boolean> {
+    try {
+        const info = await stat(targetPath);
+        return info.isFile();
+    } catch {
+        return false;
+    }
+}
+
+async function isPackageTarget(target: string): Promise<boolean> {
+    if (await isRegularFile(path.resolve(target))) {
+        return true;
+    }
+    const lower = target.toLowerCase();
+    return lower.endsWith('.wgt') || lower.endsWith('.tpk');
+}
+
+function formatInspectReport(
+    label: string,
+    execName: string,
+    report: NuiInspectReport,
+    io: CliIo,
+): void {
+    io.stdout(`Package: ${label}`);
+    io.stdout(`Exec: ${execName}`);
+    io.stdout(`Supported: ${report.supported.length}`);
+    io.stdout(`Missing: ${report.missing.length}`);
+    if (report.missing.length > 0) {
+        io.stdout('Missing members:');
+        for (const member of report.missing) {
+            io.stdout(`  - ${member}`);
+        }
+    }
+    if (report.supported.length > 0) {
+        io.stdout('Supported members:');
+        for (const member of report.supported) {
+            io.stdout(`  + ${member}`);
+        }
+    }
 }
 
 async function isExecutableFile(targetPath: string): Promise<boolean> {
@@ -250,6 +298,9 @@ async function runDoctor(home: string, io: CliIo, env: NodeJS.ProcessEnv): Promi
     const userHome = env.HOME || os.homedir();
     const studioSdbPath = path.join(userHome, 'tizen-studio', 'tools', 'sdb');
     const sdbInStudio = (await isExecutableFile(studioSdbPath)) ? studioSdbPath : null;
+    const dotnetVersion = await probeDotnetVersion(env);
+    const nuiHostPath = resolveNuiHostDllPath(env);
+    const nuiBuilt = await isRegularFile(nuiHostPath);
 
     io.stdout(`Node.js: ${process.version}`);
     io.stdout(`Arch: ${process.arch} (${process.platform})`);
@@ -258,6 +309,14 @@ async function runDoctor(home: string, io: CliIo, env: NodeJS.ProcessEnv): Promi
     io.stdout(`Port ${SDB_DEFAULT_PORT}: ${sdbPortStatus.detail}`);
     io.stdout(`Samsung sdb (PATH): ${sdbOnPath ?? 'not found'}`);
     io.stdout(`Samsung sdb (~/tizen-studio/tools/sdb): ${sdbInStudio ?? 'not found'}`);
+    io.stdout(`dotnet: ${dotnetVersion ?? 'not found'}`);
+    io.stdout(
+        `NUI runtime: ${
+            nuiBuilt
+                ? `built (${nuiHostPath})`
+                : `not built (${nuiHostPath}; run: dotnet build dotnet/Tvemu.sln -c Release)`
+        }`,
+    );
     io.stdout('Profiles:');
 
     for (const baseProfile of DEFAULT_PROFILES) {
@@ -383,7 +442,7 @@ export async function runCli(argv: string[], io: CliIo = DEFAULT_IO, env: NodeJS
                 const { positionals } = parseArgs({ args: rest, allowPositionals: true });
                 const rawPath = positionals[0];
                 if (!rawPath) {
-                    throw new Error('Usage: tvemu install <file.wgt>');
+                    throw new Error('Usage: tvemu install <file.wgt|file.tpk>');
                 }
                 const wgtPath = path.resolve(rawPath);
                 const existing = await readRunState(home);
@@ -403,12 +462,13 @@ export async function runCli(argv: string[], io: CliIo = DEFAULT_IO, env: NodeJS
                 const flags = parseStartRunFlags(rest);
                 const target = flags.positionals[0];
                 if (!target) {
-                    throw new Error('Usage: tvemu run <appId|packageId|file.wgt> [--profile <name>]');
+                    throw new Error('Usage: tvemu run <appId|packageId|file.wgt|file.tpk> [--profile <name>]');
                 }
+                const isPackage = await isPackageTarget(target);
                 const existing = await readRunState(home);
                 if (existing) {
                     let appId = target;
-                    if (isWgtTarget(target)) {
+                    if (isPackage) {
                         const wgtPath = path.resolve(target);
                         const installed = await callControl<{ app: InstalledApp }>(existing, 'install', { wgtPath });
                         appId = installed.app.manifest.appId;
@@ -441,7 +501,7 @@ export async function runCli(argv: string[], io: CliIo = DEFAULT_IO, env: NodeJS
                 }
                 await runForegroundHost(home, selection.profile, flags, io, env, async (host) => {
                     let appId = target;
-                    if (isWgtTarget(target)) {
+                    if (isPackage) {
                         const app = await host.installWgt(path.resolve(target));
                         appId = app.manifest.appId;
                         io.stdout(`Installed ${app.manifest.appId} (${app.manifest.packageId})`);
@@ -488,6 +548,74 @@ export async function runCli(argv: string[], io: CliIo = DEFAULT_IO, env: NodeJS
                 }
                 io.stdout(formatAppList(apps));
                 return 0;
+            }
+
+            case 'inspect': {
+                const { positionals } = parseArgs({ args: rest, allowPositionals: true });
+                const target = positionals[0];
+                if (!target) {
+                    throw new Error('Usage: tvemu inspect <file.tpk|installed id>');
+                }
+                const runtime = await checkNuiRuntimeAvailable(env);
+                const store = createAppStore(home);
+                const tpkPath = path.resolve(target);
+                const isFile = await isRegularFile(tpkPath);
+                const installed = isFile
+                    ? null
+                    : (await store.findByAppId(target)) ??
+                      (!target.startsWith('.') && !/[\\/:\0]/.test(target)
+                          ? await store.findByPackageId(target)
+                          : null);
+                if (installed) {
+                    if (installed.manifest.kind !== 'tpk') {
+                        throw new Error(`App ${installed.manifest.appId} is not a .tpk package`);
+                    }
+                    const execName = installed.manifest.exec ?? installed.manifest.contentSrc;
+                    const assemblyPath = path.isAbsolute(execName)
+                        ? execName
+                        : path.join(store.contentDir(installed), 'bin', execName);
+                    const report = await inspectDotnetAssembly({
+                        command: runtime.command,
+                        hostDllPath: runtime.hostDllPath,
+                        assemblyPath,
+                        env,
+                    });
+                    formatInspectReport(
+                        `${installed.manifest.packageId} (${installed.manifest.appId})`,
+                        execName,
+                        report,
+                        io,
+                    );
+                    return report.missing.length > 0 ? 2 : 0;
+                }
+
+                if (!isFile) {
+                    throw new Error(`Package or installed app not found: ${target}`);
+                }
+                const tpk = await loadTpkModule();
+                if (!tpk) {
+                    throw new Error('@tvemu/tpk is required to inspect .tpk files');
+                }
+                if (!(await tpk.isTpk(tpkPath))) {
+                    throw new Error(`Not a .tpk package: ${tpkPath}`);
+                }
+                const manifest = await tpk.readTpkManifest(tpkPath);
+                const uiApp = tpk.mainUiApp(manifest);
+                const tempDir = await mkdtemp(path.join(os.tmpdir(), 'tvemu-inspect-'));
+                try {
+                    await tpk.extractTpk(tpkPath, tempDir);
+                    const assemblyPath = path.join(tempDir, 'bin', uiApp.exec);
+                    const report = await inspectDotnetAssembly({
+                        command: runtime.command,
+                        hostDllPath: runtime.hostDllPath,
+                        assemblyPath,
+                        env,
+                    });
+                    formatInspectReport(`${manifest.packageId} (${uiApp.appId})`, uiApp.exec, report, io);
+                    return report.missing.length > 0 ? 2 : 0;
+                } finally {
+                    await rm(tempDir, { recursive: true, force: true });
+                }
             }
 
             case 'profiles': {

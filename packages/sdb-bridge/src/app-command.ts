@@ -7,7 +7,9 @@ export async function appCommand(command: string, host: HostApi, files: DeviceFi
         if (['uninstall', 'packageinfo', 'runapp', 'killapp'].includes(verb ?? '') && !args[0]) {
             throw new Error('Missing application or package ID');
         }
-        if (verb === 'install' && (args[0] !== 'wgt' || !args[1])) throw new Error('Expected WGT type and package path');
+        if (verb === 'install' && ((args[0] !== 'wgt' && args[0] !== 'tpk') || !args[1])) {
+            throw new Error('Expected WGT or TPK type and package path');
+        }
         let result = '';
         if (verb === 'appinstallpath') result = SDK_TOOLS;
         else if (verb === 'install') {
@@ -20,7 +22,7 @@ export async function appCommand(command: string, host: HostApi, files: DeviceFi
             const app = (await host.listApps()).find((app) => [app.manifest.packageId, app.manifest.appId].includes(args[0] ?? ''));
             if (!app) throw new Error('package is not installed');
             const running = await host.runningApp();
-            result = `${app.manifest.appId}:wgt:1:${running?.manifest.appId === app.manifest.appId ? 1 : 0}`;
+            result = `${app.manifest.appId}:${app.manifest.kind ?? 'wgt'}:1:${running?.manifest.appId === app.manifest.appId ? 1 : 0}`;
         } else if (verb === 'runapp') await host.launch(args[0] ?? '');
         else if (verb === 'killapp') await host.terminate(args[0] ?? '');
         else throw new Error(`Unsupported appcmd: ${verb}`);

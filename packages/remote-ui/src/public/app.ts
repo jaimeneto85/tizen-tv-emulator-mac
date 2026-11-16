@@ -255,7 +255,9 @@ export function createRemoteUiController(
         if (runningAppEl) {
             const runningEntry = message.apps.find((app) => app.manifest.appId === message.running);
             runningAppEl.textContent = runningEntry
-                ? `${runningEntry.manifest.name} (${runningEntry.manifest.appId})`
+                ? `${runningEntry.manifest.name} (${runningEntry.manifest.appId})${
+                    runningEntry.manifest.kind === 'tpk' ? ' [tpk]' : ''
+                }`
                 : message.running ?? 'None';
         }
         if (terminateBtn) {
@@ -292,6 +294,12 @@ export function createRemoteUiController(
                     idEl.textContent = app.manifest.appId;
 
                     info.append(nameEl, idEl);
+                    if (app.manifest.kind === 'tpk') {
+                        const kindEl = doc.createElement('span');
+                        kindEl.className = 'app-kind';
+                        kindEl.textContent = 'tpk';
+                        info.append(kindEl);
+                    }
 
                     const launchBtn = doc.createElement('button');
                     launchBtn.type = 'button';

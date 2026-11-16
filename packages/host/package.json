@@ -21,6 +21,7 @@
     },
     "dependencies": {
         "@tvemu/engine": "workspace:*",
+        "@tvemu/nui-renderer": "workspace:*",
         "@tvemu/protocol": "workspace:*",
         "@tvemu/remote-ui": "workspace:*",
         "@tvemu/wgt": "workspace:*",

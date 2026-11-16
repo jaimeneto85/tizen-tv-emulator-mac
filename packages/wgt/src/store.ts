@@ -4,6 +4,7 @@ import type { AppManifest, InstalledApp } from '@tvemu/protocol';
 import { extractWgt, readWgtManifest } from './archive.js';
 import { WgtError } from './wgt-error.js';
 import { parseConfigXml } from './manifest.js';
+import { loadTpkModule, type TpkApp, type TpkManifest, type TpkModule } from './tpk-loader.js';
 
 export interface AppStore {
     install(wgtPath: string): Promise<InstalledApp>;
@@ -12,6 +13,10 @@ export interface AppStore {
     findByAppId(appId: string): Promise<InstalledApp | null>;
     findByPackageId(packageId: string): Promise<InstalledApp | null>;
     contentDir(app: InstalledApp): string;
+}
+
+export interface CreateAppStoreOptions {
+    loadTpk?: () => Promise<TpkModule | null>;
 }
 
 const queues = new Map<string, Promise<unknown>>();
@@ -52,19 +57,50 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function isOptionalString(value: unknown): boolean {
+    return value === undefined || typeof value === 'string';
+}
+
 function isManifest(value: unknown): value is AppManifest {
     if (!isRecord(value)) return false;
     const strings = ['widgetId', 'appId', 'packageId', 'name', 'version', 'requiredVersion', 'contentSrc'];
     const nullable = ['icon', 'contentSecurityPolicy', 'profile'];
     return strings.every((key) => typeof value[key] === 'string')
         && nullable.every((key) => value[key] === null || typeof value[key] === 'string')
+        && (value.kind === undefined || value.kind === 'wgt' || value.kind === 'tpk')
+        && isOptionalString(value.exec)
+        && isOptionalString(value.appType)
+        && isOptionalString(value.apiVersion)
         && Array.isArray(value.privileges) && value.privileges.every((item) => isRecord(item) && typeof item.name === 'string')
         && Array.isArray(value.features) && value.features.every((item) => typeof item === 'string')
         && Array.isArray(value.accessOrigins) && value.accessOrigins.every((item) => typeof item === 'string')
         && isRecord(value.settings) && Object.values(value.settings).every((item) => typeof item === 'string');
 }
 
-export function createAppStore(home: string): AppStore {
+function toAppManifestFromTpk(tpkManifest: TpkManifest, uiApp: TpkApp): AppManifest {
+    return {
+        widgetId: tpkManifest.packageId,
+        appId: uiApp.appId,
+        packageId: tpkManifest.packageId,
+        name: uiApp.label || tpkManifest.label || uiApp.appId,
+        version: tpkManifest.version,
+        requiredVersion: tpkManifest.apiVersion,
+        contentSrc: uiApp.exec,
+        icon: uiApp.icon,
+        privileges: tpkManifest.privileges.map((name) => ({ name })),
+        features: [],
+        contentSecurityPolicy: null,
+        accessOrigins: [],
+        settings: {},
+        profile: tpkManifest.profiles[0] ?? null,
+        kind: 'tpk',
+        exec: uiApp.exec,
+        appType: uiApp.type,
+        apiVersion: tpkManifest.apiVersion,
+    };
+}
+
+export function createAppStore(home: string, options?: CreateAppStoreOptions): AppStore {
     const appsDirectory = resolve(home, 'apps');
     const directoryFor = (packageId: string) => join(appsDirectory, packageSegment(packageId));
     const queued = <T>(operation: () => Promise<T>) => serialize(appsDirectory, operation);
@@ -101,9 +137,20 @@ export function createAppStore(home: string): AppStore {
     }
 
     return {
-        install: (wgtPath) => queued(async () => {
-            const manifest = await readWgtManifest(wgtPath);
-            const installDir = directoryFor(manifest.packageId);
+        install: (packagePath) => queued(async () => {
+            const tpkLoader = options?.loadTpk ?? loadTpkModule;
+            const tpk = await tpkLoader();
+            const isTpkPackage = tpk ? await tpk.isTpk(packagePath) : false;
+            const manifest = isTpkPackage && tpk
+                ? (() => {
+                    return tpk.readTpkManifest(packagePath).then((tpkManifest) => {
+                        const uiApp = tpk.mainUiApp(tpkManifest);
+                        return toAppManifestFromTpk(tpkManifest, uiApp);
+                    });
+                })()
+                : readWgtManifest(packagePath);
+            const resolvedManifest = await manifest;
+            const installDir = directoryFor(resolvedManifest.packageId);
             await directoryExists(appsDirectory);
             await mkdir(appsDirectory, { recursive: true });
             const existed = await directoryExists(installDir);
@@ -114,13 +161,22 @@ export function createAppStore(home: string): AppStore {
             try {
                 const content = join(staging, 'content');
                 await mkdir(content);
-                await extractWgt(wgtPath, content);
-                const extractedManifest = await readFile(join(content, 'config.xml'), 'utf8');
-                const finalManifest = parseConfigXml(extractedManifest);
-                if (JSON.stringify(finalManifest) !== JSON.stringify(manifest)) {
-                    throw new WgtError('INVALID_CONFIG', 'Package changed during installation');
+                if (isTpkPackage && tpk) {
+                    const extractedTpk = await tpk.extractTpk(packagePath, content);
+                    const extractedUiApp = tpk.mainUiApp(extractedTpk);
+                    const finalManifest = toAppManifestFromTpk(extractedTpk, extractedUiApp);
+                    if (JSON.stringify(finalManifest) !== JSON.stringify(resolvedManifest)) {
+                        throw new WgtError('INVALID_CONFIG', 'Package changed during installation');
+                    }
+                } else {
+                    await extractWgt(packagePath, content);
+                    const extractedManifest = await readFile(join(content, 'config.xml'), 'utf8');
+                    const finalManifest = parseConfigXml(extractedManifest);
+                    if (JSON.stringify(finalManifest) !== JSON.stringify(resolvedManifest)) {
+                        throw new WgtError('INVALID_CONFIG', 'Package changed during installation');
+                    }
                 }
-                const app: InstalledApp = { manifest, installDir, installedAt: new Date().toISOString() };
+                const app: InstalledApp = { manifest: resolvedManifest, installDir, installedAt: new Date().toISOString() };
                 await writeFile(join(staging, 'manifest.json'), JSON.stringify(app, null, 4), { flag: 'wx' });
                 if (existed) {
                     await rename(installDir, backup);

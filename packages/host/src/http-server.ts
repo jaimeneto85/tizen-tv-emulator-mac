@@ -22,6 +22,7 @@ export interface ControlResponse {
 export interface HostHttpServerOptions {
     appStore: AppStore;
     remoteAssetsDir: string;
+    nuiAssetsDir?: string;
     profile: DeviceProfile;
     controlToken: string;
     port?: number;
@@ -517,6 +518,24 @@ export function createHostHttpServer(options: HostHttpServerOptions): HostHttpSe
             const rest = segments.slice(1);
             const targetSegments = rest.length === 0 ? ['index.html'] : rest;
             await serveFileFromDir(req, res, options.remoteAssetsDir, targetSegments, {
+                allowDirectoryListing: false,
+            });
+            return;
+        }
+
+        if (segments[0] === 'nui') {
+            if (!options.nuiAssetsDir) {
+                sendText(res, 404, 'Not found');
+                return;
+            }
+            if (rawPath === '/nui') {
+                res.writeHead(302, { location: '/nui/' });
+                res.end();
+                return;
+            }
+            const rest = segments.slice(1);
+            const targetSegments = rest.length === 0 ? ['index.html'] : rest;
+            await serveFileFromDir(req, res, options.nuiAssetsDir, targetSegments, {
                 allowDirectoryListing: false,
             });
             return;

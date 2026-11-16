@@ -237,7 +237,10 @@ export function createChromiumEngine(options: ChromiumEngineOptions): Engine {
                 () => exitReason,
                 15000,
                 () => announcedEndpoint,
-            );
+            ).catch((error: unknown) => {
+                spawned.kill('SIGKILL');
+                throw error;
+            });
             const pageWsUrl = await fetchPageTargetWsUrl(endpoint.port);
             const client = await CdpClient.connect(pageWsUrl);
             cdp = client;

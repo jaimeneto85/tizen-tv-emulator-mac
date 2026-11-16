@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../../Tizen.NUI/Tizen.NUI.csproj" /><ProjectReference Include="../../Tizen.Applications.Preference/Tizen.Applications.Preference.csproj" /><ProjectReference Include="../../Tizen.Multimedia.MediaPlayer/Tizen.Multimedia.MediaPlayer.csproj" /></ItemGroup>
+</Project>

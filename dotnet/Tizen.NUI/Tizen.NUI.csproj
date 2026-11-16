@@ -1,0 +1,1 @@
+<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Tvemu.Runtime/Tvemu.Runtime.csproj"/><ProjectReference Include="../Tizen.Applications.Common/Tizen.Applications.Common.csproj"/></ItemGroup></Project>

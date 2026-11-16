@@ -88,6 +88,7 @@ export interface DeviceProfile {
     duid: string;
     locale: string;
     country: string;
+    nuiDpi?: number;
 }
 
 export interface AppPrivilege {
@@ -109,6 +110,10 @@ export interface AppManifest {
     accessOrigins: string[];
     settings: Record<string, string>;
     profile: string | null;
+    kind?: 'wgt' | 'tpk';
+    exec?: string;
+    appType?: string;
+    apiVersion?: string;
 }
 
 export interface InstalledApp {
@@ -191,3 +196,123 @@ export type RemoteUiClientMessage =
 export type RemoteUiServerMessage =
     | { type: 'state'; profile: DeviceProfile; apps: InstalledApp[]; running: string | null; registeredKeys: string[] }
     | { type: 'log'; level: 'log' | 'warn' | 'error'; text: string };
+
+export type NuiColor = [number, number, number, number];
+export type NuiNodeKind = 'view' | 'text' | 'image' | 'field';
+export type NuiHAlign = 'begin' | 'center' | 'end';
+export type NuiVAlign = 'top' | 'center' | 'bottom';
+export type NuiImageFitting = 'fill' | 'contain' | 'cover' | 'center';
+export type NuiImePanel = 'normal' | 'email' | 'password' | 'number' | 'url';
+
+export interface NuiProps {
+    x?: number;
+    y?: number;
+    w?: number | null;
+    h?: number | null;
+    visible?: boolean;
+    opacity?: number;
+    scale?: [number, number];
+    pivot?: [number, number];
+    bg?: NuiColor;
+    radius?: [number, number, number, number];
+    borderWidth?: number;
+    borderColor?: NuiColor;
+    clip?: boolean;
+    name?: string;
+    text?: string;
+    textColor?: NuiColor;
+    pixelSize?: number;
+    multiline?: boolean;
+    hAlign?: NuiHAlign;
+    vAlign?: NuiVAlign;
+    ellipsis?: boolean;
+    fontFamily?: string;
+    fontWeight?: string;
+    fontStyle?: string;
+    lineSpacing?: number;
+    placeholder?: string;
+    placeholderColor?: NuiColor;
+    hidden?: boolean;
+    maxLength?: number;
+    url?: string;
+    fitting?: NuiImageFitting;
+}
+
+export interface NuiWindowProps {
+    bg?: NuiColor;
+}
+
+export interface NuiImeOptions {
+    panel?: NuiImePanel;
+    hidden?: boolean;
+}
+
+export type NuiOp =
+    | ['create', number, NuiNodeKind]
+    | ['set', number, NuiProps]
+    | ['insert', number, number, number]
+    | ['detach', number]
+    | ['destroy', number]
+    | ['window', NuiWindowProps]
+    | ['focus', number]
+    | ['ime', number, NuiImeOptions?];
+
+export type NuiPlayerMessage =
+    | { t: 'player'; id: number; op: 'open'; url: string }
+    | { t: 'player'; id: number; op: 'display'; mode: 'window' | 'none' }
+    | { t: 'player'; id: number; op: 'prepare' }
+    | { t: 'player'; id: number; op: 'start' }
+    | { t: 'player'; id: number; op: 'pause' }
+    | { t: 'player'; id: number; op: 'stop' }
+    | { t: 'player'; id: number; op: 'seek'; ms: number }
+    | { t: 'player'; id: number; op: 'volume'; value: number }
+    | { t: 'player'; id: number; op: 'mute'; value: boolean }
+    | { t: 'player'; id: number; op: 'rate'; value: number }
+    | { t: 'player'; id: number; op: 'close' };
+
+export type NuiRuntimeLogLevel = 'debug' | 'info' | 'warn' | 'error' | 'fatal';
+
+export type NuiRuntimeMessage =
+    | { t: 'hello'; v: number; token: string }
+    | { t: 'ready' }
+    | { t: 'frame'; ops: NuiOp[] }
+    | NuiPlayerMessage
+    | { t: 'log'; level: NuiRuntimeLogLevel; tag: string; msg: string }
+    | { t: 'missing'; member: string }
+    | { t: 'exit'; code: number; reason: 'app-exit' | 'crash'; error?: string };
+
+export interface NuiWelcomeAppInfo {
+    packageId: string;
+    appId: string;
+    exec: string;
+    installDir: string;
+    dataDir: string;
+    locale: string;
+}
+
+export type NuiPlayerEventName =
+    | 'prepared'
+    | 'playing'
+    | 'paused'
+    | 'ended'
+    | 'error'
+    | 'time'
+    | 'seeked';
+
+export type NuiLifecycleEventName = 'pause' | 'resume' | 'terminate';
+
+export type NuiHostMessage =
+    | { t: 'welcome'; v: number; window: { w: number; h: number }; profile: DeviceProfile; app: NuiWelcomeAppInfo }
+    | { t: 'key'; state: 'down' | 'up'; key: RemoteKeyName; code: number }
+    | { t: 'text'; id: number; value: string }
+    | { t: 'image'; id: number; status: 'ready' | 'failed'; w?: number; h?: number }
+    | { t: 'measure'; id: number; w: number; h: number }
+    | {
+          t: 'player';
+          id: number;
+          event: NuiPlayerEventName;
+          positionMs?: number;
+          durationMs?: number;
+          message?: string;
+      }
+    | { t: 'lifecycle'; event: NuiLifecycleEventName };
