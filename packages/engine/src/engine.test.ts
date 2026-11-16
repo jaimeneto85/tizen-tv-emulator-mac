@@ -193,6 +193,7 @@ describe('launch arguments and lock cleanup', () => {
         });
         expect(args).toContain('--user-data-dir=/tmp/tvemu-prof');
         expect(args).toContain('--remote-debugging-port=0');
+        expect(args).toContain('--force-color-profile=srgb');
         expect(args).toContain('--no-sandbox');
         expect(args).toContain('--disable-web-security');
         expect(args).toContain('--headless');

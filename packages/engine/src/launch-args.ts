@@ -33,6 +33,7 @@ export function buildChromiumLaunchArgs(options: BuildLaunchArgsOptions): string
         '--no-default-browser-check',
         '--disable-features=Translate',
         '--autoplay-policy=no-user-gesture-required',
+        '--force-color-profile=srgb',
         `--window-size=${windowWidth},${windowHeight}`,
     ];
 
