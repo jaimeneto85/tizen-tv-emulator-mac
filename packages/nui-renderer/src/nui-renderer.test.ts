@@ -20,7 +20,7 @@ interface Harness {
     events: NuiHostMessage[];
     applyFrame: (ops: unknown[]) => void;
     applyPlayer: (msg: Record<string, unknown>) => void;
-    dispatchKey: (type: 'keydown' | 'keyup', keyCode: number, key: string) => KeyboardEvent;
+    dispatchKey: (type: 'keydown' | 'keyup', keyCode: number, key: string, repeat?: boolean) => KeyboardEvent;
 }
 
 function loadRenderer(options?: { hls?: unknown }): Harness {
@@ -50,8 +50,8 @@ function loadRenderer(options?: { hls?: unknown }): Harness {
         events,
         applyFrame: (ops) => win.__tvemuNui.apply(JSON.stringify({ t: 'frame', ops })),
         applyPlayer: (msg) => win.__tvemuNui.apply(JSON.stringify({ t: 'player', ...msg })),
-        dispatchKey: (type, keyCode, key) => {
-            const event = new win.KeyboardEvent(type, { key, bubbles: true, cancelable: true });
+        dispatchKey: (type, keyCode, key, repeat) => {
+            const event = new win.KeyboardEvent(type, { key, bubbles: true, cancelable: true, repeat: repeat === true });
             Object.defineProperty(event, 'keyCode', { get: () => keyCode });
             Object.defineProperty(event, 'which', { get: () => keyCode });
             win.dispatchEvent(event);
@@ -374,6 +374,112 @@ describe('nui-renderer bundle in jsdom', () => {
         expect(panel.style.display).toBe('block');
         h.applyFrame([['ime', 0, {}]]);
         expect(panel.style.display).toBe('none');
+    });
+
+    it('closes the keyboard when focus leaves its field and keeps held keys with their owner', () => {
+        const h = loadRenderer();
+        cleanups.push(() => h.window.__tvemuNui.destroy());
+        h.applyFrame([
+            ['create', 7, 'field'],
+            ['set', 7, { x: 20, y: 20, w: 300, h: 50, placeholder: 'Email' }],
+            ['insert', 0, 7, 0],
+            ['create', 8, 'view'],
+            ['set', 8, { x: 20, y: 100, w: 300, h: 50 }],
+            ['insert', 0, 8, 1],
+            ['focus', 7],
+        ]);
+        const input = h.document.querySelector<HTMLInputElement>('[data-nui-id="7"] input')!;
+        const open = (): boolean => h.window.__tvemuNui.debug().keyboard.open;
+
+        h.events.length = 0;
+        h.dispatchKey('keydown', 13, 'Enter');
+        h.applyFrame([['ime', 7, { panel: 'normal', hidden: false }]]);
+        expect(open()).toBe(true);
+        h.dispatchKey('keydown', 13, 'Enter', true);
+        h.dispatchKey('keyup', 13, 'Enter');
+        expect(input.value).toBe('');
+        expect(h.events).toEqual([
+            { t: 'key', state: 'down', key: 'Enter', code: 13 },
+            { t: 'key', state: 'down', key: 'Enter', code: 13 },
+            { t: 'key', state: 'up', key: 'Enter', code: 13 },
+        ]);
+
+        h.events.length = 0;
+        h.dispatchKey('keydown', 10009, 'Back');
+        expect(open()).toBe(false);
+        h.dispatchKey('keydown', 10009, 'Back', true);
+        h.dispatchKey('keyup', 10009, 'Back');
+        expect(h.events).toEqual([]);
+
+        h.applyFrame([['ime', 7, { panel: 'normal', hidden: false }]]);
+        expect(open()).toBe(true);
+        h.applyFrame([['focus', 8]]);
+        expect(open()).toBe(false);
+        h.dispatchKey('keydown', 13, 'Enter');
+        h.dispatchKey('keyup', 13, 'Enter');
+        expect(input.value).toBe('');
+        expect(h.events).toEqual([
+            { t: 'key', state: 'down', key: 'Enter', code: 13 },
+            { t: 'key', state: 'up', key: 'Enter', code: 13 },
+        ]);
+
+        h.applyFrame([['focus', 7], ['ime', 7, { panel: 'normal', hidden: false }]]);
+        expect(open()).toBe(true);
+        expect(h.document.activeElement).toBe(input);
+        h.applyFrame([['ime', 99, { panel: 'normal', hidden: false }]]);
+        expect(open()).toBe(false);
+        expect(h.document.activeElement).not.toBe(input);
+
+        h.applyFrame([['ime', 7, { panel: 'normal', hidden: false }]]);
+        expect(open()).toBe(true);
+        h.applyFrame([['detach', 7]]);
+        expect(open()).toBe(false);
+
+        h.applyFrame([['insert', 0, 7, 0], ['ime', 7, { panel: 'normal', hidden: false }]]);
+        input.value = 'abc';
+        h.window.__tvemuNui.hideKeyboard(true);
+        h.events.length = 0;
+        const right = h.dispatchKey('keydown', 39, 'ArrowRight');
+        h.dispatchKey('keyup', 39, 'ArrowRight');
+        expect(right.defaultPrevented).toBe(true);
+        expect(h.events).toEqual([
+            { t: 'key', state: 'down', key: 'ArrowRight', code: 39 },
+            { t: 'key', state: 'up', key: 'ArrowRight', code: 39 },
+        ]);
+    });
+
+    it('types and deletes at the caret and replaces the selection within the length limit', () => {
+        const h = loadRenderer();
+        cleanups.push(() => h.window.__tvemuNui.destroy());
+        h.applyFrame([
+            ['create', 7, 'field'],
+            ['set', 7, { x: 20, y: 20, w: 300, h: 50, placeholder: 'Name', maxLength: 4 }],
+            ['insert', 0, 7, 0],
+            ['ime', 7, { panel: 'normal', hidden: false }],
+        ]);
+        const input = h.document.querySelector<HTMLInputElement>('[data-nui-id="7"] input')!;
+        const panel = h.document.querySelector<HTMLElement>('[data-tvemu-keyboard]')!;
+        const click = (key: string): void => {
+            panel.querySelector<HTMLElement>(`[data-tvemu-key="${key}"]`)!
+                .dispatchEvent(new h.window.MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        };
+
+        input.value = 'abcd';
+        input.setSelectionRange(1, 3);
+        click('q');
+        expect(input.value).toBe('aqd');
+        expect(input.selectionStart).toBe(2);
+        click('backspace');
+        expect(input.value).toBe('ad');
+        input.setSelectionRange(0, 2);
+        click('backspace');
+        expect(input.value).toBe('');
+        click('w');
+        click('w');
+        click('w');
+        click('w');
+        click('w');
+        expect(input.value).toBe('wwww');
     });
 
     it('manages underlay video player lifecycle, time ticks, and HLS fallback', () => {

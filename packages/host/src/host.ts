@@ -820,6 +820,7 @@ export function createHost(options: CreateHostOptions): TvemuHost {
         if (before.focus?.kind !== 'field') {
             throw new Error('No text field is focused. Move the focus to a field first (tvemu ui shows the focus).');
         }
+        await evaluate<boolean>(HIDE_KEYBOARD_EXPRESSION);
         await sendKey('Enter');
         const deadline = Date.now() + 2000;
         while (Date.now() < deadline) {

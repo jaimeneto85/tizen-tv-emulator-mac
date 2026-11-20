@@ -37,7 +37,7 @@ export interface NuiDebugSnapshot {
 export interface NuiRendererApi {
     apply: (json: string) => void;
     debug: () => NuiDebugSnapshot;
-    hideKeyboard: () => void;
+    hideKeyboard: (blur?: boolean) => void;
     destroy: () => void;
     planeFrame: (id: number, jpegBase64: string) => void;
 }
@@ -201,6 +201,7 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
     const fieldInputs = new Set<HTMLInputElement>();
     const suppressedKeyCodes = new Set<number>();
     const forwardedKeyCodes = new Set<number>();
+    const keyboardKeyCodes = new Set<number>();
 
     let focusedId = 0;
     let imeId = 0;
@@ -722,15 +723,27 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
         }
     }
 
+    function dismissKeyboard(blur?: boolean): void {
+        keyboard.hide();
+        if (blur === true) {
+            blurFocusedField();
+        }
+    }
+
+    function closeDetachedKeyboard(): void {
+        const node = nodes.get(imeId);
+        if (imeId !== 0 && (!node || !stageEl.contains(node.el))) {
+            imeId = 0;
+            dismissKeyboard(true);
+        }
+    }
+
     function applyIme(id: number, opts?: NuiImeOptions): void {
         imeId = id;
-        if (id === 0) {
-            keyboard.hide();
-            blurFocusedField();
-            return;
-        }
-        const node = nodes.get(id);
+        const node = id === 0 ? undefined : nodes.get(id);
         if (!node || !node.inputEl) {
+            imeId = 0;
+            dismissKeyboard(true);
             return;
         }
         if (opts && opts.panel !== undefined) {
@@ -765,6 +778,7 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
         }
         if (kind === 'detach') {
             detachNode(op[1]);
+            closeDetachedKeyboard();
             return;
         }
         if (kind === 'destroy') {
@@ -777,6 +791,9 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
         }
         if (kind === 'focus') {
             focusedId = op[1];
+            if (keyboard.isOpen() && focusedId !== imeId) {
+                dismissKeyboard(true);
+            }
             return;
         }
         if (kind === 'ime') {
@@ -1186,15 +1203,24 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
 
     const onKeyDown = (event: KeyboardEvent): void => {
         const code = event.keyCode;
-        if (keyboard.handleKey(code)) {
-            event.preventDefault();
-            suppressedKeyCodes.add(code);
-            return;
-        }
-        const focusedInput = activeFieldInput();
-        if (focusedInput && shouldEditFocusedInput(event, focusedInput)) {
-            suppressedKeyCodes.add(code);
-            return;
+        const heldByApp = event.repeat && forwardedKeyCodes.has(code);
+        if (!heldByApp) {
+            if (event.repeat && keyboardKeyCodes.has(code)) {
+                keyboard.handleKey(code);
+                event.preventDefault();
+                return;
+            }
+            keyboardKeyCodes.delete(code);
+            if (keyboard.handleKey(code)) {
+                event.preventDefault();
+                keyboardKeyCodes.add(code);
+                return;
+            }
+            const focusedInput = activeFieldInput();
+            if (focusedInput && shouldEditFocusedInput(event, focusedInput)) {
+                suppressedKeyCodes.add(code);
+                return;
+            }
         }
         suppressedKeyCodes.delete(code);
         const mapped = resolveRemoteKey(code);
@@ -1213,6 +1239,10 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
 
     const onKeyUp = (event: KeyboardEvent): void => {
         const code = event.keyCode;
+        if (keyboardKeyCodes.delete(code)) {
+            event.preventDefault();
+            return;
+        }
         if (suppressedKeyCodes.has(code)) {
             suppressedKeyCodes.delete(code);
             return;
@@ -1318,7 +1348,8 @@ export function installNuiRenderer(win: Window, doc: Document): NuiRendererApi {
         rootChildIds.length = 0;
         fieldInputs.clear();
         suppressedKeyCodes.clear();
+        keyboardKeyCodes.clear();
     }
 
-    return { apply, debug, destroy, planeFrame, hideKeyboard: keyboard.hide };
+    return { apply, debug, destroy, planeFrame, hideKeyboard: dismissKeyboard };
 }

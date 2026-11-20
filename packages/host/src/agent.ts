@@ -160,7 +160,7 @@ export const UI_SNAPSHOT_EXPRESSION = `(function () {
 
 export const HIDE_KEYBOARD_EXPRESSION = `(function () {
     var nui = window.__tvemuNui;
-    if (nui && typeof nui.hideKeyboard === 'function') { nui.hideKeyboard(); }
+    if (nui && typeof nui.hideKeyboard === 'function') { nui.hideKeyboard(true); }
     return true;
 })()`;
 

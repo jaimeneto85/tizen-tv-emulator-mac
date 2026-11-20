@@ -103,6 +103,10 @@ export function createVirtualKeyboard(doc: Document, stageEl: HTMLElement): Virt
     panelEl.style.width = `${width}px`;
     panelEl.style.marginLeft = `${-width / 2}px`;
 
+    panelEl.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+    });
+
     let target: HTMLInputElement | null = null;
     let panel: NuiImePanel = 'normal';
     let page: 'letters' | 'symbols' = 'letters';
@@ -178,25 +182,61 @@ export function createVirtualKeyboard(doc: Document, stageEl: HTMLElement): Virt
         target.dispatchEvent(event);
     }
 
+    function selectionOf(input: HTMLInputElement): { start: number; end: number } {
+        const length = input.value.length;
+        try {
+            const start = input.selectionStart;
+            const end = input.selectionEnd;
+            if (typeof start === 'number' && typeof end === 'number') {
+                return { start: Math.min(start, end, length), end: Math.min(Math.max(start, end), length) };
+            }
+        } catch (error) {
+            return { start: length, end: length };
+        }
+        return { start: length, end: length };
+    }
+
+    function replaceRange(input: HTMLInputElement, start: number, end: number, text: string): void {
+        const next = input.value.slice(0, start) + text + input.value.slice(end);
+        if (next === input.value) {
+            return;
+        }
+        input.value = next;
+        try {
+            input.setSelectionRange(start + text.length, start + text.length);
+        } catch (error) {
+            input.value = next;
+        }
+        emitInput();
+    }
+
     function insert(text: string): void {
         if (!target) {
             return;
         }
+        const { start, end } = selectionOf(target);
         const limit = target.maxLength > 0 ? target.maxLength : Number.MAX_SAFE_INTEGER;
-        const next = (target.value + text).slice(0, limit);
-        if (next === target.value) {
+        const room = Math.max(0, limit - (target.value.length - (end - start)));
+        const accepted = text.slice(0, room);
+        if (accepted.length === 0 && start === end) {
             return;
         }
-        target.value = next;
-        emitInput();
+        replaceRange(target, start, end, accepted);
     }
 
     function removeLast(): void {
-        if (!target || target.value.length === 0) {
+        if (!target) {
             return;
         }
-        target.value = target.value.slice(0, -1);
-        emitInput();
+        const { start, end } = selectionOf(target);
+        if (start !== end) {
+            replaceRange(target, start, end, '');
+            return;
+        }
+        if (start === 0) {
+            return;
+        }
+        replaceRange(target, start - 1, start, '');
     }
 
     function clearAll(): void {
